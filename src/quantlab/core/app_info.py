@@ -24,6 +24,19 @@ def app_version() -> str:
         return getattr(quantlab, "__version__", "0+unknown")
 
 
+def build_label() -> str:
+    """The build tag written next to QuantLab.exe by CI ('build-12'); source checkouts say so."""
+    import sys
+
+    if not getattr(sys, "frozen", False):
+        return "개발 버전"
+    info = Path(sys.executable).parent / "build-info.txt"
+    try:
+        return info.read_text(encoding="utf-8-sig").splitlines()[0].strip()
+    except (OSError, IndexError):
+        return "버전 정보 없음"
+
+
 @functools.lru_cache(maxsize=1)
 def app_code_hash() -> str:
     h = hashlib.sha256()

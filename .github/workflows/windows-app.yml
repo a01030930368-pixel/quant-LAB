@@ -37,9 +37,34 @@ jobs:
           $p = Start-Process -FilePath "dist\QuantLab\QuantLab.exe" -ArgumentList "--selftest" -Wait -PassThru
           Get-Content $env:QUANTLAB_SELFTEST_LOG
           if ($p.ExitCode -ne 0) { throw "selftest failed with exit code $($p.ExitCode)" }
+      - name: Add build info and updater
+        shell: pwsh
+        run: |
+          $tag = if ("${{ github.ref }}" -eq "refs/heads/main") { "build-${{ github.run_number }}" } else { "dev-${{ github.run_number }}" }
+          "TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          $sha = "${{ github.sha }}".Substring(0, 7)
+          "$tag`ncommit $sha`nbuilt $((Get-Date).ToUniversalTime().ToString('yyyy-MM-dd HH:mm')) UTC" | Set-Content dist\QuantLab\build-info.txt -Encoding utf8
+          Copy-Item packaging\update.bat, packaging\update.ps1 dist\QuantLab\
       - name: Zip
         shell: pwsh
         run: Compress-Archive -Path dist\QuantLab -DestinationPath QuantLab-windows.zip
+      - name: Test the updater on an older install (Windows PowerShell 5.1)
+        shell: pwsh
+        run: |
+          $inst = "$env:RUNNER_TEMP\installed\QuantLab"
+          New-Item -ItemType Directory -Path "$env:RUNNER_TEMP\installed" | Out-Null
+          Copy-Item dist\QuantLab $inst -Recurse
+          "build-0" | Set-Content "$inst\build-info.txt"
+          "keep me" | Set-Content "$inst\user-note.txt"
+          Remove-Item "$inst\_internal\quantlab" -Recurse -Force   # the old install is visibly not the new build
+          $p = Start-Process powershell.exe -ArgumentList "-NoProfile","-ExecutionPolicy","Bypass","-File","$inst\update.ps1","-ZipPath","$PWD\QuantLab-windows.zip","-NoPause","-NoLaunch" -Wait -PassThru -NoNewWindow
+          if ($p.ExitCode -ne 0) { throw "updater exit code $($p.ExitCode)" }
+          if ((Get-Content "$inst\build-info.txt" | Select-Object -First 1).Trim() -ne $env:TAG) { throw "build-info not updated" }
+          if (-not (Test-Path "$inst\user-note.txt")) { throw "updater removed a user file" }
+          $env:QUANTLAB_SELFTEST_LOG = "$env:RUNNER_TEMP\selftest-updated.log"
+          $q = Start-Process -FilePath "$inst\QuantLab.exe" -ArgumentList "--selftest" -Wait -PassThru
+          Get-Content $env:QUANTLAB_SELFTEST_LOG
+          if ($q.ExitCode -ne 0) { throw "updated app selftest failed with exit code $($q.ExitCode)" }
       - uses: actions/upload-artifact@v4
         with:
           name: QuantLab-windows

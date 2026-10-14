@@ -4,3 +4,6 @@
 *.png binary
 *.zip binary
 *.parquet binary
+# Windows scripts shipped next to QuantLab.exe: cmd.exe and Windows PowerShell expect CRLF
+*.bat text eol=crlf
+*.ps1 text eol=crlf

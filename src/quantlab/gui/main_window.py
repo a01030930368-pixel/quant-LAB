@@ -748,7 +748,9 @@ class MainWindow(QMainWindow):
             sl.addWidget(b)
             self.nav[name] = b
         sl.addStretch(1)
-        folder = QLabel(f"작업 폴더\n{lab.ws.root}")
+        from quantlab.core.app_info import build_label
+
+        folder = QLabel(f"{build_label()}\n\n작업 폴더\n{lab.ws.root}")
         folder.setObjectName("muted")
         folder.setWordWrap(True)
         sl.addWidget(folder)
