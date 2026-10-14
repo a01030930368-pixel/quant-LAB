@@ -14,12 +14,12 @@ AI_CLIENTS = re.compile(r"\b(anthropic|openai|google[-_.]generativeai|google[-_.
 
 
 def test_no_ai_client_in_dependencies_or_source():
-    assert not AI_CLIENTS.search((ROOT / "pyproject.toml").read_text())
-    lock = (ROOT / "uv.lock").read_text()
+    assert not AI_CLIENTS.search((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    lock = (ROOT / "uv.lock").read_text(encoding="utf-8")
     names = re.findall(r'^name = "([^"]+)"', lock, re.M)
     assert not [n for n in names if AI_CLIENTS.search(n)], names
     for p in (ROOT / "src").rglob("*.py"):
-        assert not re.search(r"^\s*(import|from)\s+(anthropic|openai)", p.read_text(), re.M), p
+        assert not re.search(r"^\s*(import|from)\s+(anthropic|openai)", p.read_text(encoding="utf-8"), re.M), p
 
 
 def test_full_flow_runs_with_network_blocked(monkeypatch, tmp_path):

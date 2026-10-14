@@ -32,7 +32,7 @@ def statuses(rep):
 
 
 def test_parse_tiingo_fixture():
-    df = parse_tiingo(json.loads((FIX / "tiingo_spy_sample.json").read_text()))
+    df = parse_tiingo(json.loads((FIX / "tiingo_spy_sample.json").read_text(encoding="utf-8")))
     assert list(df.index.strftime("%Y-%m-%d")) == ["2010-06-01", "2010-06-02", "2010-06-03"]
     assert df.loc["2010-06-02", "close"] == 110.0 and df["split"].eq(1.0).all()
     with pytest.raises(ProviderError):

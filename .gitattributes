@@ -1,0 +1,6 @@
+# LF everywhere, including Windows checkouts: charter copies are verified byte-for-byte
+# against docs/charter/SHA256SUMS, and spec/code hashes should not depend on the OS.
+* text=auto eol=lf
+*.png binary
+*.zip binary
+*.parquet binary
