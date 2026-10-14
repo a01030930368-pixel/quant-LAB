@@ -45,6 +45,20 @@ class BacktestSummary:
     benchmark: BacktestResult
 
 
+def run_dev(factory, policy: dict, dev: MarketData, params: dict, qc_fatal: list[str]):
+    """One exploratory run on TRAIN+VALIDATION data: metrics, strategy result, benchmark result."""
+    res = run_backtest(factory(**params), dev, _cfg(policy))
+    bench = run_backtest(BuyAndHold(policy["benchmark_symbol"]), dev, _cfg(policy))
+    rf = _rf(dev, policy)
+    m = {"strategy": M.summarize(res.equity, res.trades, rf), "benchmark": M.summarize(bench.equity, bench.trades, rf),
+         "window": [str(dev.calendar[0].date()), str(dev.calendar[-1].date())], "params": params,
+         "qc_fatal": qc_fatal}
+    m["sharpe_diff"] = m["strategy"]["sharpe"] - m["benchmark"]["sharpe"]
+    ex = res.returns() - rf.reindex(res.equity.index).fillna(0.0)
+    m["sr_period"] = M.sharpe(ex, annualize=False)
+    return m, res, bench
+
+
 class Lab:
     def __init__(self, root: str | Path | None = None) -> None:
         self.ws = Workspace.open(root)
@@ -129,13 +143,7 @@ class Lab:
         data, manifest = self._strategy_symbols_data(loaded, dataset_version)
         dev = dev_data(data, policy)  # the holdout never reaches exploratory runs
         p = {**loaded.default_params, **(params or {})}
-        res = run_backtest(loaded.factory(**p), dev, _cfg(policy))
-        bench = run_backtest(BuyAndHold(policy["benchmark_symbol"]), dev, _cfg(policy))
-        rf = _rf(dev, policy)
-        m = {"strategy": M.summarize(res.equity, res.trades, rf), "benchmark": M.summarize(bench.equity, bench.trades, rf),
-             "window": [str(dev.calendar[0].date()), str(dev.calendar[-1].date())], "params": p,
-             "qc_fatal": manifest.get("qc_fatal", [])}
-        m["sharpe_diff"] = m["strategy"]["sharpe"] - m["benchmark"]["sharpe"]
+        m, res, bench = run_dev(loaded.factory, policy, dev, p, manifest.get("qc_fatal", []))
         eid = self.registry.record_experiment(
             kind="exploratory", strategy_id=loaded.strategy_id, strategy_version=loaded.version,
             dataset_version=dataset_version, config={"params": p, "policy_hash": policy_hash, "scope": "dev"},
@@ -154,6 +162,13 @@ class Lab:
     def artifacts(self, eid: str) -> tuple[pd.DataFrame, pd.DataFrame]:
         d = self.ws.path("artifacts", eid)
         return pd.read_parquet(d / "equity.parquet"), pd.read_parquet(d / "trades.parquet")
+
+    # --- batch experiments (dev data only) -----------------------------------------------
+    def search(self, strategy_hash: str, dataset_version: str, space: dict | None = None, workers: int = 0,
+               resume: str | None = None, progress=None, should_stop=None) -> dict:
+        from quantlab.services.batch import run_search
+
+        return run_search(self, strategy_hash, dataset_version, space, workers, resume, progress, should_stop)
 
     # --- candidate confirmation and final evaluation -----------------------------------
     def confirm_candidate(self, strategy_hash: str, params: dict | None = None, note: str = "") -> dict:

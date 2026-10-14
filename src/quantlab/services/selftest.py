@@ -55,6 +55,8 @@ def run_selftest(root: str | Path | None = None, log=print) -> dict:
         steps = {"dataset": version, "strategy_hash": imp.strategy_hash, "backtest": bt.experiment_id}
         if hasattr(lab, "search"):
             batch = lab.search(imp.strategy_hash, version, workers=1)
+            log(f"best trial {batch['best']['params']} sharpe diff {batch['best']['sharpe_diff']:.3f}, "
+                f"DSR {batch['best_dsr']:.3f} over {batch['family_trials']} trials (not adopted automatically)")
             log(f"search {batch['batch_id']}: {batch['done']} trials done")
             steps["batch"] = batch["batch_id"]
         lab.confirm_candidate(imp.strategy_hash, note="selftest")
