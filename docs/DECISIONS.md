@@ -108,3 +108,15 @@ metrics, verdicts, policy, spec, trial summary, daily equity, trades and charts 
 files — and refuses to write it if the stored API key string appears in any member. Every export
 is recorded with whether it includes holdout results, because a viewed holdout result makes later
 derived strategies non-independent (lineage check).
+
+## D-014 · 2026-10-14 · Swing entry/exit rules and trade-level checks
+The prior project's research (handoff 2026-10-14) is swing-style: buy on a condition, sell on a
+condition, after N sessions, or at a stop/target. Spec v1 gains `rules.entry_exit` (legs, one
+position per leg, `equal_active` or fixed-slot sizing). Every decision, including stops and
+targets, is taken at the close and filled at the next open; the prior 15:55-decide/15:59-fill
+variant needs intraday bars and is not approximated. Indicators read split-adjusted prices in a
+bounded window (`max_hold_days` is mandatory, ≤ 252) through `MarketView.tail_values`, which
+keeps a 4-symbol, 6-year run under a second. Reports add descriptive trade-level checks (gross
+mean per trade, median, mean without the top 10, day-clustered t, CAGR without the best year);
+they are not gate criteria in policy v1. An N4 daily approximation lives in test fixtures only
+to prove the rules can express it; N4 is not registered as a candidate (seen data, 100+ trials).

@@ -1,0 +1,79 @@
+# Expressibility check only (plan M12b): the prior project's N4 bundle written with
+# entry_exit rules on daily bars. NOT a research candidate and NOT registered for
+# validation: N4 was chosen after viewing 2011..2026-03 US data (handoff §4-3), and the
+# original decided at 15:55 and filled at 15:59, which daily bars cannot reproduce.
+# Signals are read on the 1x index ETF and traded in the 3x ETF.
+spec_version: 1
+strategy:
+  id: N4-DAILY-APPROX
+  version: 0.1.0
+  name: 지수 과매도 반등 묶음 (일봉 근사, 표현 확인용)
+  type: mean_reversion
+  author: claude
+  parent: null
+  derived_after_holdout_view: true
+hypothesis:
+  class: data_mining
+  economic_rationale: >
+    Short-term overreaction in broad index ETFs after sharp declines (Connors & Alvarez 2009);
+    liquidity providers are paid to absorb forced selling, so prices partly revert within days.
+  expected_risks:
+    - persistent declines (2018, 2008) hit every leg together
+    - 3x ETF path dependence and gap risk
+    - selected among 100+ prior trials on the same US data
+  falsification: >
+    On data not seen by the prior project, gross mean per trade not above zero, or net Sharpe
+    not above the benchmark.
+universe:
+  market: US_ETF
+  symbols: [SPY, QQQ, SPXL, TQQQ]
+  frequency: daily
+rules:
+  kind: declarative
+  entry_exit:
+    sizing: equal_active
+    legs:
+      - name: S2
+        trade: SPXL
+        entry:
+          - {indicator: close_vs_min, of: SPY, days: 5, op: "<=", value: 0}
+          - {indicator: close_vs_sma, of: SPY, days: 200, op: ">", value: 0}
+        exit:
+          any: [{indicator: close_vs_max, of: SPY, days: 5, op: ">=", value: 0}]
+          max_hold_days: 15
+      - name: D3
+        trade: TQQQ
+        entry: [{indicator: down_streak, of: QQQ, op: ">=", value: 3}]
+        exit:
+          any: [{indicator: return, of: QQQ, days: 1, op: ">", value: 0}]
+          max_hold_days: 10
+      - name: B4
+        trade: TQQQ
+        entry:
+          - {indicator: bollinger_z, of: QQQ, days: 20, op: "<", value: -2}
+          - {indicator: close_vs_sma, of: QQQ, days: 200, op: ">", value: 0}
+        exit:
+          any: [{indicator: close_vs_sma, of: QQQ, days: 5, op: ">", value: 0}]
+          max_hold_days: 10
+      - name: Y2
+        trade: SPXL
+        entry:
+          - {indicator: session, value: first_of_week}
+          - {indicator: return, of: SPY, days: 1, op: "<", value: -0.01}
+        exit: {max_hold_days: 1}
+      - name: F3
+        trade: SPXL
+        entry:
+          - {indicator: session, value: last_of_week}
+          - {indicator: close_vs_min, of: SPY, days: 20, op: "<=", value: 0}
+          - {indicator: close_vs_sma, of: SPY, days: 200, op: ">", value: 0}
+        exit: {max_hold_days: 5}
+execution:
+  signal_time: close
+  fill: next_open
+  rebalance: daily
+parameters: {}
+benchmark: SPY_buy_and_hold
+costs: {one_way_bps: 30}
+validation:
+  policy: swing_v1

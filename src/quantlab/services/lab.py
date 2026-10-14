@@ -20,6 +20,7 @@ from typing import Any
 import pandas as pd
 import yaml
 
+from quantlab.analysis.trades import episodes, trade_stats, without_best_year
 from quantlab.backtesting.engine import BacktestResult, run_backtest
 from quantlab.core.hashing import stable_hash
 from quantlab.core.market_data import MarketData
@@ -56,6 +57,8 @@ def run_dev(factory, policy: dict, dev: MarketData, params: dict, qc_fatal: list
     m["sharpe_diff"] = m["strategy"]["sharpe"] - m["benchmark"]["sharpe"]
     ex = res.returns() - rf.reindex(res.equity.index).fillna(0.0)
     m["sr_period"] = M.sharpe(ex, annualize=False)
+    m["trades"] = trade_stats(episodes(res, dev))
+    m["without_best_year"] = without_best_year(res.equity)
     return m, res, bench
 
 

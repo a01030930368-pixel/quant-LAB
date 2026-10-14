@@ -227,6 +227,12 @@ def load_spec(path: str | Path) -> LoadedSpec:
         symbols, rebalance = spec["universe"]["symbols"], spec["execution"]["rebalance"]
 
         def factory(**params):
+            if "entry_exit" in rules:
+                from quantlab.strategies.declarative import _apply_params
+                from quantlab.strategies.entry_exit import EntryExitStrategy, resolve_params
+
+                return EntryExitStrategy(spec_id=sid, spec_version_str=ver, symbols=symbols,
+                                         rules=_apply_params(resolve_params(rules, params), params), **params)
             return DeclarativeStrategy(spec_id=sid, spec_version_str=ver, symbols=symbols,
                                        rules=rules, rebalance=rebalance, **params)
     return LoadedSpec(path, spec, code, content_hash(spec, code), factory)

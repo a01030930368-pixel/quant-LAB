@@ -51,6 +51,19 @@ def _metrics_table(rows: dict[str, dict]) -> str:
     return head + body
 
 
+def _trade_lines(label: str, ts: dict | None) -> list[str]:
+    """Trade-level checks (descriptive, not gate criteria)."""
+    if not ts:
+        return []
+    if not ts.get("n"):
+        return [f"- 거래 단위 점검({label}): 거래 없음"]
+    return [f"- 거래 단위 점검({label}, 판정 기준 아님): {ts['n']}건 · 비용 전 평균 {_pct(ts['mean_gross'])}, "
+            f"중앙값 {_pct(ts['median_gross'])}, 상위 10건 뺀 평균 {_pct(ts.get('mean_gross_ex_top10'))}, "
+            f"비용 후 평균 {_pct(ts['mean_net'])}, 비용 후 승률 {_pct(ts['win_rate_net'])}, "
+            f"같은 날 진입을 묶은 t값 {_num(ts.get('t_day_clustered'), 2)} ({ts['entry_days']}일), "
+            f"평균 보유 {_num(ts['mean_sessions'], 1)}거래일"]
+
+
 def build_report(lab, experiment_id: str) -> tuple[str, dict]:
     reg = lab.registry
     e = reg.experiment(experiment_id)
@@ -114,6 +127,12 @@ def build_report(lab, experiment_id: str) -> tuple[str, dict]:
     for k, v in (m.get("gate4_neighbors") or {}).items():
         g4.append(f"- 인접 파라미터 {k}: 샤프 차이 {_num(v)}")
     S[9] = g4 or ["- Gate 4(일부)는 Gate 3을 통과한 경우에만 실행된다. 이번 실험에서는 실행되지 않았다."]
+    S[9] += _trade_lines("보류 구간", (m.get("holdout") or {}).get("trades"))
+    S[9] += _trade_lines("TRAIN+VALIDATION", (m.get("dev") or {}).get("trades") or m.get("trades"))
+    wb = (m.get("dev") or {}).get("without_best_year") or m.get("without_best_year")
+    if wb:
+        S[9].append(f"- 가장 좋은 해({wb['best_year']}, {_pct(wb['best_year_return'])})를 뺀 CAGR: "
+                    f"{_pct(wb['cagr_ex_best_year'])} (전체 {_pct(wb['cagr_all'])}, TRAIN+VALIDATION)")
     S[10] = [f"- 벤치마크: {policy.get('benchmark_symbol')} 매수 후 보유(같은 엔진·같은 비용)",
              f"- 샤프 차이 {_num(perf_src.get('sharpe_diff'))}, 초과 CAGR {_pct(perf_src.get('excess_cagr'))}"]
     S[11] = [f"- {x}" for x in STANDING_LIMITS] + [f"- 전략 고유 위험: {', '.join(map(str, hy.get('expected_risks', [])))}"]

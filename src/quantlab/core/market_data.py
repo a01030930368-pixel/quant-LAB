@@ -52,6 +52,15 @@ class MarketData:
             out[sym] = d[list(FIELDS)].astype(float)
         return cls(cal, out)
 
+    def values(self, symbol: str) -> np.ndarray:
+        """Read-only (n x 6) array of FIELDS for one symbol, cached per instance."""
+        cache = self.__dict__.setdefault("_values", {})
+        if symbol not in cache:
+            arr = self.frames[symbol][list(FIELDS)].to_numpy(dtype=float, copy=True)
+            arr.setflags(write=False)
+            cache[symbol] = arr
+        return cache[symbol]
+
     @property
     def symbols(self) -> list[str]:
         return list(self.frames)

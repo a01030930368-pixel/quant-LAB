@@ -11,6 +11,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any, Mapping
 
+import numpy as np
 import pandas as pd
 
 from quantlab.core.hashing import stable_hash
@@ -46,6 +47,17 @@ class MarketView:
         """All fields up to and including now (a copy; edits do not reach the data)."""
         return self._frame(symbol).copy()
 
+    def tail(self, symbol: str, n: int) -> pd.DataFrame:
+        """The last n rows up to and including now (a copy); cheaper than frame() for indicators."""
+        lo = max(0, self._t + 1 - n)
+        return self._data.frames[symbol].iloc[lo: self._t + 1].copy()
+
+    def tail_values(self, symbol: str, n: int) -> np.ndarray:
+        """Last n rows up to and including now as an array (columns: open, high, low, close,
+        dividend, split). A copy; fast path for indicator code."""
+        lo = max(0, self._t + 1 - n)
+        return self._data.values(symbol)[lo: self._t + 1].copy()
+
     def total_return(self, symbol: str) -> pd.Series:
         return total_return_index(self._frame(symbol))
 
@@ -62,6 +74,12 @@ class MarketView:
         if self._t + 1 >= len(cal):
             return True
         return cal[self._t + 1].month != cal[self._t].month
+
+    def is_first_session_of_week(self) -> bool:
+        cal = self._data.calendar
+        if self._t == 0:
+            return True
+        return cal[self._t - 1].isocalendar()[:2] != cal[self._t].isocalendar()[:2]
 
     def is_last_session_of_week(self) -> bool:
         cal = self._data.calendar

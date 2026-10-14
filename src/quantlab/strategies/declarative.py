@@ -142,6 +142,12 @@ def validate_rules(rules: dict, symbols: list[str], rebalance: str) -> list[str]
                 errs.append(f"rules.{key} uses symbols outside the universe: {sorted(set(w) - set(symbols))}")
             elif sum(w.values()) > 1 + 1e-9 or any(v < 0 for v in w.values()):
                 errs.append(f"rules.{key} weights must be non-negative and sum to at most 1")
+    elif "entry_exit" in rules:
+        from quantlab.strategies.entry_exit import validate_entry_exit
+
+        if rebalance != "daily":
+            errs.append("entry_exit rules are judged every session: execution.rebalance must be daily")
+        errs += validate_entry_exit(rules["entry_exit"], symbols)
     elif "rank" in rules:
         rk = rules["rank"]
         if rk.get("score") not in ("momentum", "sma", "volatility"):
@@ -153,7 +159,7 @@ def validate_rules(rules: dict, symbols: list[str], rebalance: str) -> list[str]
         if set(rules.get("cash", {})) - set(symbols):
             errs.append("rules.cash uses symbols outside the universe")
     else:
-        errs.append("declarative rules need either 'signal' (conditional) or 'rank'")
+        errs.append("declarative rules need 'signal' (conditional), 'rank' or 'entry_exit'")
     return errs
 
 
