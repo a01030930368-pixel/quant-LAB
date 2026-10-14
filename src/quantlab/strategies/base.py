@@ -18,6 +18,15 @@ from quantlab.core.hashing import stable_hash
 from quantlab.core.market_data import MarketData, total_return_index
 
 
+class PartialWeights(dict):
+    """Target weights for the listed symbols only: the engine leaves every other position as it is.
+
+    A plain dict re-targets every symbol (unlisted ones to 0), which also trims or tops up
+    holdings whose weight drifted. Swing strategies that size each position once at entry
+    return this instead, so a new entry does not trade the positions already held.
+    """
+
+
 class LookaheadError(RuntimeError):
     """Raised when strategy code asks for information dated after the current bar."""
 

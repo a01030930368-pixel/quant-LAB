@@ -6,15 +6,16 @@ The detailed screens remain under "고급" for step-by-step control; these pages
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
 import yaml
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from PySide6.QtCore import Qt, QUrl
-from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import (QButtonGroup, QComboBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel,
-                               QLineEdit, QMessageBox, QProgressBar, QPushButton, QScrollArea, QSizePolicy,
-                               QVBoxLayout, QWidget)
+from PySide6.QtGui import QColor, QDesktopServices, QPalette
+from PySide6.QtWidgets import (QAbstractItemView, QButtonGroup, QComboBox, QFileDialog, QFrame, QHBoxLayout,
+                               QHeaderView, QLabel, QLineEdit, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton,
+                               QScrollArea, QSizePolicy, QStyledItemDelegate, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
 from quantlab.analysis import charts
 from quantlab.gui import theme
@@ -86,13 +87,13 @@ class Page(QScrollArea):
         inner = QWidget()
         inner.setObjectName("page")
         outer = QHBoxLayout(inner)
-        outer.setContentsMargins(32, 28, 32, 32)
+        outer.setContentsMargins(14, 14, 14, 14)
         col = QWidget()
         col.setObjectName("page")
-        col.setMaximumWidth(980)
+        col.setMaximumWidth(1480)
         self.body = QVBoxLayout(col)
         self.body.setContentsMargins(0, 0, 0, 0)
-        self.body.setSpacing(16)
+        self.body.setSpacing(12)
         outer.addWidget(col)
         self.setWidget(inner)
 
@@ -104,17 +105,100 @@ class Page(QScrollArea):
 
 
 # ----------------------------------------------------------------------------- home
+STATE_KO = {"RESEARCH": "연구 중", "VALIDATION": "검증 중", "IDEA": "검사 미통과", "REJECTED": "기각",
+            "HOLD": "보류", "PAPER_TRADING": "모의운용", "CANDIDATE": "후보", "LIVE": "실거래", "SUSPENDED": "중단"}
+
+
+def pane_header(text: str, right: QWidget | str | None = None) -> QHBoxLayout:
+    """Small uppercase-style caption at the top of a pane, with an optional item on the right."""
+    row = QHBoxLayout()
+    row.setContentsMargins(0, 0, 0, 0)
+    row.addWidget(label(text, "ph"))
+    row.addStretch()
+    if isinstance(right, str):
+        row.addWidget(label(right, "ph"))
+    elif right is not None:
+        row.addWidget(right)
+    return row
+
+
+def separator() -> QFrame:
+    f = QFrame()
+    f.setObjectName("sep")
+    f.setFrameShape(QFrame.VLine)
+    return f
+
+
+def hline() -> QFrame:
+    f = QFrame()
+    f.setObjectName("hsep")
+    f.setFrameShape(QFrame.HLine)
+    return f
+
+
+def kpi_strip(items: list[tuple[str, str, str | None]]) -> tuple[Card, list[QLabel]]:
+    """One pane split into equal cells: caption, big fixed-width number, optional note."""
+    c = Card(0, 0)
+    row = QHBoxLayout()
+    row.setSpacing(0)
+    row.setContentsMargins(0, 0, 0, 0)
+    values = []
+    for i, (name, value, note) in enumerate(items):
+        if i:
+            row.addWidget(separator())
+        cell = QVBoxLayout()
+        cell.setContentsMargins(14, 10, 14, 10)
+        cell.setSpacing(2)
+        cell.addWidget(label(name, "muted"))
+        v = label(value, "big")
+        values.append(v)
+        cell.addWidget(v)
+        if note is not None:
+            cell.addWidget(label(note, "muted"))
+        row.addLayout(cell, 1)
+    c.lay.addLayout(row)
+    return c, values
+
+
+def cell(text: str, color: str | None = None, mono: bool = True, align=Qt.AlignRight) -> QTableWidgetItem:
+    it = QTableWidgetItem(text)
+    it.setFlags(it.flags() & ~Qt.ItemIsEditable)
+    it.setTextAlignment(align | Qt.AlignVCenter)
+    if mono:
+        it.setFont(theme.mono_font(13))
+    if color:
+        it.setForeground(QColor(color))
+    return it
+
+
+class KeepColors(QStyledItemDelegate):
+    """Selected rows keep each cell's own text color (rise red, fall blue) instead of one highlight color."""
+
+    def initStyleOption(self, opt, index):  # noqa: N802 (Qt name)
+        super().initStyleOption(opt, index)
+        fg = index.data(Qt.ForegroundRole)
+        if fg is not None:
+            opt.palette.setBrush(QPalette.HighlightedText, fg)
+
+
 class HomePage(Page):
+    """Strategy table on the left, the selected strategy's curve and the work log on the right."""
+
+    COLS = ("전략", "이름", "상태", "연수익", "벤치", "MDD", "샤프", "판정")
+
     def __init__(self, win):
         super().__init__()
         self.win = win
         self.run_buttons: list[QPushButton] = []
-        self.cards: dict[str, QFrame] = {}
-        self.body.addWidget(label("전략을 고르고 실행하세요", "h1"))
-        self.body.addWidget(label("버튼 하나로 가격 자료 준비부터 백테스트까지 진행합니다. "
-                                  "탐색 실험은 최종 평가 구간을 열지 않습니다.", "body2", wrap=True))
-        # progress card (hidden until a job runs)
-        self.progress = Card(18, 8)
+        self.cards: dict[str, int] = {}  # strategy id -> table row
+        self.paths: list[Path] = []
+        self.selected: str | None = None
+        self._seen = -1  # history length at the last refresh
+        self.kpis, self.kpi_values = kpi_strip([("등록 전략", "0", None), ("탐색 실험", "0", None),
+                                                ("최종 평가", "0", None), ("PASS 판정", "0", None)])
+        self.body.addWidget(self.kpis)
+        # progress pane (hidden until a job runs)
+        self.progress = Card(12, 6)
         self.step = label("", "h3")
         self.bar = QProgressBar()
         self.bar.setRange(0, 0)
@@ -125,27 +209,89 @@ class HomePage(Page):
         self.body.addWidget(self.progress)
         self.key_card = self._key_card()
         self.body.addWidget(self.key_card)
-        self.list_head = QHBoxLayout()
-        self.list_head.addWidget(label("전략", "h2"))
-        self.list_head.addStretch()
-        self.list_head.addWidget(button("명세서 파일 추가", "link", self.add_spec))
-        self.body.addLayout(self.list_head)
-        self.grid_host = QWidget()
-        self.grid_host.setObjectName("page")
-        self.grid = QGridLayout(self.grid_host)
-        self.grid.setContentsMargins(0, 0, 0, 0)
-        self.grid.setSpacing(16)
-        self.body.addWidget(self.grid_host)
-        self.body.addStretch()
+
+        row = QHBoxLayout()
+        row.setSpacing(12)
+        # left: strategy table + actions
+        left = Card(0, 0)
+        head = QWidget()
+        hl = QVBoxLayout(head)
+        hl.setContentsMargins(12, 8, 12, 8)
+        self.count = label("", "ph")
+        hl.addLayout(pane_header("전략 목록", self.count))
+        left.lay.addWidget(head)
+        self.table = QTableWidget(0, len(self.COLS))
+        self.table.setObjectName("plain")
+        self.table.setHorizontalHeaderLabels(self.COLS)
+        self.table.verticalHeader().setVisible(False)
+        self.table.verticalHeader().setDefaultSectionSize(36)
+        self.table.setShowGrid(False)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.setFocusPolicy(Qt.NoFocus)
+        self.table.setItemDelegate(KeepColors(self.table))
+        hh = self.table.horizontalHeader()
+        hh.setSectionResizeMode(QHeaderView.ResizeToContents)
+        hh.setSectionResizeMode(1, QHeaderView.Stretch)
+        for i in range(len(self.COLS)):
+            self.table.horizontalHeaderItem(i).setTextAlignment((Qt.AlignLeft if i < 2 else Qt.AlignRight) | Qt.AlignVCenter)
+        self.table.setMinimumHeight(220)
+        self.table.itemSelectionChanged.connect(self._on_select)
+        left.lay.addWidget(self.table, 1)
+        acts = QHBoxLayout()
+        acts.setContentsMargins(12, 10, 12, 12)
+        acts.setSpacing(8)
+        self.run_btn = button("▶  백테스트 실행", "primary", lambda: self._selected_path() and self.run(self._selected_path()))
+        self.final_btn = button("최종 평가", "secondary",
+                                lambda: self._selected_path() and self.final(self._selected_path(), self.selected))
+        self.run_buttons = [self.run_btn, self.final_btn]
+        acts.addWidget(self.run_btn)
+        acts.addWidget(self.final_btn)
+        acts.addWidget(button("명세서 추가", "secondary", self.add_spec))
+        acts.addStretch()
+        acts.addWidget(label("탐색 실험은 최종 평가 구간을 열지 않아요", "muted"))
+        left.lay.addLayout(acts)
+        row.addWidget(left, 1)
+
+        # right: curve of the selected strategy + work log
+        right = Card(0, 0)
+        right.setFixedWidth(340)
+        ch = QWidget()
+        cl = QVBoxLayout(ch)
+        cl.setContentsMargins(12, 8, 12, 4)
+        self.chart_title = label("누적 수익", "ph")
+        cl.addWidget(self.chart_title)
+        self.chart_host = QVBoxLayout()
+        cl.addLayout(self.chart_host)
+        right.lay.addWidget(ch)
+        right.lay.addWidget(hline())
+        lh = QWidget()
+        ll = QVBoxLayout(lh)
+        ll.setContentsMargins(12, 8, 12, 0)
+        ll.addWidget(label("작업 기록", "ph"))
+        right.lay.addWidget(lh)
+        self.log = QPlainTextEdit()
+        self.log.setObjectName("log")
+        self.log.setReadOnly(True)
+        self.log.setMaximumBlockCount(300)
+        right.lay.addWidget(self.log, 1)
+        row.addWidget(right)
+        self.body.addLayout(row, 1)
+        self.win.runner.message.connect(self.log_line)
 
     @property
     def lab(self):
         return self.win.lab
 
+    def log_line(self, text: str) -> None:
+        self.log.appendPlainText(f"{datetime.now():%H:%M}  {text}")
+
     def _key_card(self) -> Card:
-        c = Card()
-        c.lay.addWidget(label("가격 자료를 받으려면 Tiingo API 키가 필요해요", "h3"))
-        c.lay.addWidget(label("키는 Windows 자격 증명 관리자에만 저장되고 파일·기록·결과 패킷에는 남지 않아요.", "muted", wrap=True))
+        c = Card(12, 8)
+        c.lay.addLayout(pane_header("가격 자료 연결"))
+        c.lay.addWidget(label("가격 자료를 받으려면 Tiingo API 키가 필요해요. 키는 Windows 자격 증명 관리자에만 저장되고 "
+                              "파일·기록·결과 패킷에는 남지 않아요.", "body2", wrap=True))
         row = QHBoxLayout()
         self.key = QLineEdit()
         self.key.setEchoMode(QLineEdit.Password)
@@ -172,15 +318,31 @@ class HomePage(Page):
                                                self.win.notify(f"{res.strategy_id}: {res.state}"
                                                                + ("\n" + "\n".join(res.problems) if res.problems else ""))))
 
-    # strategy cards -----------------------------------------------------------
+    # strategy table -------------------------------------------------------------
     def refresh(self):
         self.key_card.setVisible(not self.lab.has_api_key())
-        _empty(self.grid)
-        self.run_buttons = []
+        history = self.lab.registry.history()
+        formal = [e for e in history if e["kind"] == "formal"]
+        self.paths = list(self.lab.strategy_files())
+        for v, n in zip(self.kpi_values, (len(self.paths), len(history) - len(formal), len(formal),
+                                          sum(1 for e in formal if e.get("overall") == "PASS"))):
+            v.setText(str(n))
         self.cards = {}
-        for i, path in enumerate(self.lab.strategy_files()):
-            card = self._strategy_card(path)
-            self.grid.addWidget(card, i // 2, i % 2)
+        self.table.blockSignals(True)
+        self.table.setRowCount(len(self.paths))
+        for i, path in enumerate(self.paths):
+            self._fill_row(i, path)
+        self.table.blockSignals(False)
+        self.count.setText(f"{len(self.paths)}개")
+        if self.selected not in self.cards or len(history) != self._seen:
+            # after a new experiment (or at start) show the strategy run most recently, else the first row
+            recent = [e["strategy_id"] for e in history if e["strategy_id"] in self.cards]
+            self.selected = recent[-1] if recent else None
+        self._seen = len(history)
+        row = self.cards.get(self.selected, 0 if self.paths else -1)
+        if row >= 0:
+            self.table.selectRow(row)
+        self._on_select()
 
     def _last(self, sid: str) -> tuple[dict | None, dict | None]:
         last_dev = last_formal = None
@@ -193,58 +355,69 @@ class HomePage(Page):
                 last_dev = e
         return last_dev, last_formal
 
-    def _strategy_card(self, path: Path) -> Card:
+    def _fill_row(self, i: int, path: Path) -> None:
         spec = yaml.safe_load(path.read_text(encoding="utf-8"))
         st = spec["strategy"]
         sid = st["id"]
-        c = Card()
-        self.cards[sid] = c
-        top = QHBoxLayout()
+        self.cards[sid] = i
+        first = cell(sid, theme.TEXT, align=Qt.AlignLeft)
+        first.setData(Qt.UserRole, sid)
+        first.setToolTip(f"v{st['version']} · " + " · ".join(spec["universe"]["symbols"]))
+        self.table.setItem(i, 0, first)
+        self.table.setItem(i, 1, cell(st["name"], theme.TEXT2, mono=False, align=Qt.AlignLeft))
         state = self.lab.registry.current_state(sid)
-        top.addWidget(chip({"RESEARCH": "연구 중", "VALIDATION": "검증 중", "IDEA": "검사 미통과",
-                            "REJECTED": "기각"}.get(state, "새 전략")))
-        top.addWidget(chip(spec["hypothesis"]["class"] == "theory" and "이론 기반" or "데이터 탐색"))
-        top.addStretch()
-        top.addWidget(label(f"{sid} · v{st['version']}", "muted"))
-        c.lay.addLayout(top)
-        c.lay.addWidget(label(st["name"], "h3", wrap=True))
-        syms = spec["universe"]["symbols"]
-        c.lay.addWidget(label(" · ".join(syms[:8]) + (f" 외 {len(syms) - 8}" if len(syms) > 8 else ""), "muted", wrap=True))
+        self.table.setItem(i, 2, cell(STATE_KO.get(state, "새 전략"), theme.TEXT2, mono=False))
         dev, formal = self._last(sid)
+        m = self.lab.registry.experiment(dev["experiment_id"])["metrics"] if dev else {}
+        s, b = m.get("strategy", {}), m.get("benchmark", {})
+        for j, val in ((3, s.get("cagr")), (4, b.get("cagr")), (5, s.get("max_drawdown"))):
+            self.table.setItem(i, j, cell(pct(val, True), theme.signed_color(val) if val is not None else theme.MUTED))
+        sh = s.get("sharpe")
+        self.table.setItem(i, 6, cell("—" if sh is None or sh != sh else f"{sh:.2f}"))
+        verdict = formal["overall"] if formal and formal.get("overall") else None
+        fg = theme.VERDICT.get(verdict or "INVALID", theme.VERDICT["INVALID"])[0] if verdict else theme.MUTED
+        self.table.setItem(i, 7, cell(verdict or "—", fg))
+
+    def _selected_path(self) -> Path | None:
+        row = self.cards.get(self.selected) if self.selected else None
+        return self.paths[row] if row is not None and row < len(self.paths) else None
+
+    def _on_select(self):
+        rows = self.table.selectionModel().selectedRows()
+        if rows:
+            self.selected = self.table.item(rows[0].row(), 0).data(Qt.UserRole)
+        elif not self.paths:
+            self.selected = None
+        dev, formal = self._last(self.selected) if self.selected else (None, None)
+        self.run_btn.setEnabled(self.selected is not None)
+        self.final_btn.setEnabled(formal is None and dev is not None)
+        self.final_btn.setToolTip("탐색 실험을 먼저 해 보세요." if dev is None else
+                                  "이 전략은 이미 최종 평가를 했습니다." if formal else "보류 구간을 한 번 열어 판정합니다.")
+        self._show_chart(dev)
+
+    def _show_chart(self, dev: dict | None) -> None:
+        _empty(self.chart_host)
+        self.chart_title.setText(f"{self.selected} 누적 수익 · 주황 전략 · 회색 벤치마크" if self.selected else "누적 수익")
+        eq = None
         if dev:
-            m = self.lab.registry.experiment(dev["experiment_id"])["metrics"]
-            row = QHBoxLayout()
-            for name, val, signed in (("연 수익률", m["strategy"]["cagr"], True), ("벤치마크", m["benchmark"]["cagr"], True),
-                                      ("최대 낙폭", m["strategy"]["max_drawdown"], True)):
-                box = QVBoxLayout()
-                box.addWidget(label(name, "muted"))
-                v = label(pct(val, signed), "h3")
-                v.setStyleSheet(f"color: {theme.signed_color(val)};")
-                box.addWidget(v)
-                row.addLayout(box)
-            row.addStretch()
-            c.lay.addLayout(row)
-            c.lay.addWidget(label("최근 탐색 실험 (최종 평가 구간 제외)", "muted"))
-        if formal:
-            fg, bg = theme.VERDICT.get(formal["overall"] or "INVALID", theme.VERDICT["INVALID"])
-            r = QHBoxLayout()
-            r.addWidget(label("최종 평가", "muted"))
-            r.addWidget(chip(formal["overall"] or "—", fg, bg))
-            r.addStretch()
-            c.lay.addLayout(r)
-        c.lay.addStretch()
-        btns = QHBoxLayout()
-        run = button("백테스트 실행", "primary", lambda: self.run(path))
-        self.run_buttons.append(run)
-        btns.addWidget(run, 1)
-        fin = button("최종 평가", "secondary", lambda: self.final(path, sid))
-        fin.setEnabled(formal is None and dev is not None)
-        fin.setToolTip("탐색 실험을 먼저 해 보세요." if dev is None else
-                       "이 전략은 이미 최종 평가를 했습니다." if formal else "보류 구간을 한 번 열어 판정합니다.")
-        self.run_buttons.append(fin)
-        btns.addWidget(fin)
-        c.lay.addLayout(btns)
-        return c
+            try:
+                eq, _ = self.lab.artifacts(dev["experiment_id"])
+            except FileNotFoundError:
+                eq = None
+        if eq is None:
+            msg = label("백테스트를 실행하면 여기에 누적 수익 곡선이 나와요.", "muted", wrap=True)
+            msg.setMinimumHeight(160)
+            msg.setAlignment(Qt.AlignCenter)
+            self.chart_host.addWidget(msg)
+            return
+        with charts.dark():
+            fig = charts.equity(eq, None, title="", names=charts.KO)
+        for ax in fig.axes:
+            if ax.get_legend():
+                ax.get_legend().remove()  # too small for a legend; the caption names the lines
+        canvas = FigureCanvasQTAgg(fig)
+        canvas.setFixedHeight(200)
+        self.chart_host.addWidget(canvas)
 
     # actions ------------------------------------------------------------------
     def _busy(self, text: str):
@@ -302,7 +475,7 @@ class ResultPage(Page):
         head.addWidget(self.pick)
         self.body.addLayout(head)
         self.content = QVBoxLayout()
-        self.content.setSpacing(16)
+        self.content.setSpacing(12)
         self.body.addLayout(self.content)
         self.body.addStretch()
         self.eid: str | None = None
@@ -346,8 +519,8 @@ class ResultPage(Page):
         src = m.get("holdout") or m.get("dev") or m
         s, b = src.get("strategy", {}), src.get("benchmark", {})
 
-        # summary card
-        top = Card()
+        # summary pane: title row, then a strip of fixed-width numbers
+        top = Card(12, 8)
         r = QHBoxLayout()
         r.addWidget(label(f"{e['strategy_id']} · v{e['strategy_version']}", "h2"))
         r.addStretch()
@@ -364,27 +537,6 @@ class ResultPage(Page):
         cost = f" · 비용 반영(편도 {(c.get('commission_bps', 0) + c.get('slippage_bps', 0)) / 100:.2f}%)" if c else ""
         top.lay.addWidget(label(("최종 평가 구간 " if formal and m.get("holdout") else "탐색 구간(학습+검증) ") + period
                                 + cost, "muted"))
-        ts = src.get("trades") or m.get("trades") or {}
-        tiles = QHBoxLayout()
-        tiles.setSpacing(28)
-        for name, val, sub, signed in (
-                ("연 수익률", s.get("cagr"), f"벤치마크 {pct(b.get('cagr'), True)}", True),
-                ("샤프 지수", s.get("sharpe"), f"벤치마크 {b.get('sharpe', 0):.2f}" if b else "", False),
-                ("최대 낙폭", s.get("max_drawdown"), f"벤치마크 {pct(b.get('max_drawdown'), True)}", True),
-                ("거래 수", ts.get("n", s.get("n_trades")),
-                 f"매수·매도 체결 {s.get('n_trades')}회" if ts else "체결 기준", False)):
-            box = QVBoxLayout()
-            box.setSpacing(2)
-            box.addWidget(label(name, "muted"))
-            text = pct(val, True) if signed else ("—" if val is None else (f"{val:.2f}" if isinstance(val, float) else str(val)))
-            big = label(text, "big")
-            if signed:
-                big.setStyleSheet(f"color: {theme.signed_color(val)};")
-            box.addWidget(big)
-            box.addWidget(label(sub, "muted"))
-            tiles.addLayout(box)
-        tiles.addStretch()
-        top.lay.addLayout(tiles)
         diff = src.get("sharpe_diff")
         if diff is not None:
             better = diff > 0
@@ -392,10 +544,27 @@ class ResultPage(Page):
                                     + f" (샤프 차이 {diff:+.2f})", "body2"))
         self.content.addWidget(top)
 
+        ts = src.get("trades") or m.get("trades") or {}
+        items, signs = [], []
+        for name, val, sub, signed in (
+                ("연 수익률", s.get("cagr"), f"벤치마크 {pct(b.get('cagr'), True)}", True),
+                ("샤프 지수", s.get("sharpe"), f"벤치마크 {b.get('sharpe', 0):.2f}" if b else "", False),
+                ("최대 낙폭", s.get("max_drawdown"), f"벤치마크 {pct(b.get('max_drawdown'), True)}", True),
+                ("거래 수", ts.get("n", s.get("n_trades")),
+                 f"매수·매도 체결 {s.get('n_trades')}회" if ts else "체결 기준", False)):
+            text = pct(val, True) if signed else ("—" if val is None else (f"{val:.2f}" if isinstance(val, float) else str(val)))
+            items.append((name, text, sub))
+            signs.append(val if signed else None)
+        strip, values = kpi_strip(items)
+        for v, val in zip(values, signs):
+            if val is not None:
+                v.setStyleSheet(f"color: {theme.signed_color(val)};")
+        self.content.addWidget(strip)
+
         # verdict reasons
         if formal and verdicts:
-            vc = Card(20, 6)
-            vc.lay.addWidget(label("판정 근거", "h3"))
+            vc = Card(12, 6)
+            vc.lay.addLayout(pane_header("판정 근거"))
             names = {"GATE1": "1단계 · 데이터·누출·계산 검사", "GATE2": "2단계 · 탐색 구간 가치",
                      "GATE3": "3단계 · 최종 평가 구간", "GATE4_PARTIAL": "4단계 · 비용 2배·주변 설정"}
             for g in ("GATE1", "GATE2", "GATE3", "GATE4_PARTIAL"):
@@ -416,7 +585,7 @@ class ResultPage(Page):
         except FileNotFoundError:
             eq = None
         if eq is not None:
-            cc = Card(18, 8)
+            cc = Card(12, 8)
             seg = QHBoxLayout()
             group = QButtonGroup(cc)
             host = QVBoxLayout()
@@ -427,7 +596,8 @@ class ResultPage(Page):
 
             def show(name):
                 _empty(host)
-                canvas = FigureCanvasQTAgg(figs[name]())
+                with charts.dark():
+                    canvas = FigureCanvasQTAgg(figs[name]())
                 canvas.setMinimumHeight(330)
                 host.addWidget(canvas)
 
@@ -447,8 +617,8 @@ class ResultPage(Page):
         # trade-level checks
         ts = src.get("trades") or m.get("trades")
         if ts and ts.get("n"):
-            tc = Card(20, 6)
-            tc.lay.addWidget(label("거래 단위 점검", "h3"))
+            tc = Card(12, 6)
+            tc.lay.addLayout(pane_header("거래 단위 점검"))
             tc.lay.addWidget(label(
                 f"{ts['n']}건 · 거래당 평균 {pct(ts['mean_gross'], True)} (비용 전), 중앙값 {pct(ts['median_gross'], True)}, "
                 f"상위 10건 뺀 평균 {pct(ts.get('mean_gross_ex_top10'), True)}, 비용 후 승률 {pct(ts['win_rate_net'])}, "

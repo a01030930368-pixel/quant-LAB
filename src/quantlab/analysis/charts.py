@@ -6,6 +6,9 @@ works headless (reports, CI) and inside a Qt canvas (GUI) alike.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+
+import matplotlib
 import numpy as np
 import pandas as pd
 from matplotlib.figure import Figure
@@ -15,6 +18,28 @@ STRATEGY = "#3182F6"
 BENCHMARK = "#B0B8C1"
 HOLDOUT = "#FFD158"
 INK = "#4E5968"
+# Reports use the light palette; the app wraps chart creation in `dark()`.
+LIGHT = {"strategy": STRATEGY, "benchmark": BENCHMARK, "ink": INK, "spine": "#E5E8EB", "grid": "#F2F4F6", "rc": {}}
+# app (trading-terminal look): amber strategy line on the pane color
+DARK = {"strategy": "#F2A93B", "benchmark": "#56606C", "ink": "#8C96A3", "spine": "#1F262E", "grid": "#182027",
+        "rc": {"figure.facecolor": "#11151A", "axes.facecolor": "#11151A", "savefig.facecolor": "#11151A",
+               "text.color": "#B6BEC9", "axes.labelcolor": "#B6BEC9", "xtick.color": "#8C96A3",
+               "ytick.color": "#8C96A3", "axes.edgecolor": "#1F262E", "legend.labelcolor": "#B6BEC9"}}
+_P = LIGHT
+
+
+@contextmanager
+def dark():
+    """Build figures in the app's dark colors (colors are fixed when a figure is created)."""
+    global _P
+    old, _P = _P, DARK
+    try:
+        with matplotlib.rc_context(DARK["rc"]):
+            yield
+    finally:
+        _P = old
+
+
 EN = {"strategy": "strategy", "benchmark": "benchmark", "holdout": "final holdout"}
 KO = {"strategy": "전략", "benchmark": "벤치마크", "holdout": "최종 평가 구간"}
 
@@ -28,9 +53,9 @@ def _clean(ax) -> None:
     """Quiet axes: no box, light grid, gray tick labels."""
     for side in ("top", "right", "left"):
         ax.spines[side].set_visible(False)
-    ax.spines["bottom"].set_color("#E5E8EB")
-    ax.tick_params(colors=INK, labelsize=9, length=0)
-    ax.grid(axis="y", color="#F2F4F6", lw=1)
+    ax.spines["bottom"].set_color(_P["spine"])
+    ax.tick_params(colors=_P["ink"], labelsize=9, length=0)
+    ax.grid(axis="y", color=_P["grid"], lw=1)
     ax.set_axisbelow(True)
 
 
@@ -38,8 +63,8 @@ def equity(eq: pd.DataFrame, holdout_start=None, title="Cumulative return (log s
     fig = _fig()
     ax = fig.add_subplot()
     norm = eq / eq.iloc[0]
-    ax.plot(norm.index, norm["benchmark"], color=BENCHMARK, lw=1.2, label=names["benchmark"])
-    ax.plot(norm.index, norm["strategy"], color=STRATEGY, lw=1.8, label=names["strategy"])
+    ax.plot(norm.index, norm["benchmark"], color=_P["benchmark"], lw=1.2, label=names["benchmark"])
+    ax.plot(norm.index, norm["strategy"], color=_P["strategy"], lw=1.8, label=names["strategy"])
     if holdout_start is not None:
         ax.axvspan(pd.Timestamp(holdout_start), norm.index[-1], color=HOLDOUT, alpha=0.18, lw=0, label=names["holdout"])
     ax.set_yscale("log")
@@ -56,7 +81,7 @@ def equity(eq: pd.DataFrame, holdout_start=None, title="Cumulative return (log s
 def drawdown(eq: pd.DataFrame, title="Drawdown", names=EN) -> Figure:
     fig = _fig(8.0, 2.6)
     ax = fig.add_subplot()
-    for col, color in (("benchmark", BENCHMARK), ("strategy", STRATEGY)):
+    for col, color in (("benchmark", _P["benchmark"]), ("strategy", _P["strategy"])):
         dd = eq[col] / eq[col].cummax() - 1
         ax.plot(dd.index, dd * 100, color=color, lw=1.2, label=names[col])
     ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: f"{y:.0f}%"))
@@ -85,7 +110,7 @@ def monthly_returns(eq: pd.Series, title="Monthly returns (strategy, %)") -> Fig
         if np.isfinite(v):
             ax.text(j, i, f"{v:.1f}", ha="center", va="center", fontsize=7)
     fig.colorbar(im, ax=ax, shrink=0.8)
-    ax.tick_params(colors=INK, labelsize=8, length=0)
+    ax.tick_params(colors=_P["ink"], labelsize=8, length=0)
     for side in ax.spines.values():
         side.set_visible(False)
     if title:
@@ -103,7 +128,7 @@ def parameter_sensitivity(rows: list[dict], metric="sharpe_diff", title=None) ->
     if len(names) == 1:
         xs = [r["params"][names[0]] for r in done]
         order = np.argsort(xs)
-        ax.plot(np.array(xs)[order], np.array([r[metric] for r in done])[order], marker="o", color=STRATEGY)
+        ax.plot(np.array(xs)[order], np.array([r[metric] for r in done])[order], marker="o", color=_P["strategy"])
         ax.axhline(0, color=BENCHMARK, lw=0.8)
         ax.set_xlabel(names[0])
         _clean(ax)
