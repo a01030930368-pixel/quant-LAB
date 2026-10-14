@@ -91,7 +91,8 @@ class Lab:
         dest = self.ws.path("examples")
         dest.mkdir(parents=True, exist_ok=True)
         for f in resources.files("quantlab.builtin").joinpath("specs").iterdir():
-            if f.name.endswith(".qls.yaml") and not (dest / f.name).exists():
+            # AUTO-* generator specs belong to the automatic search page, not to the strategy cards
+            if f.name.endswith(".qls.yaml") and not f.name.startswith("AUTO-") and not (dest / f.name).exists():
                 (dest / f.name).write_bytes(f.read_bytes())
         return dest
 
@@ -177,6 +178,11 @@ class Lab:
         return pd.read_parquet(d / "equity.parquet"), pd.read_parquet(d / "trades.parquet")
 
     # --- batch experiments (dev data only) -----------------------------------------------
+    def auto_search(self):
+        from quantlab.services.autosearch import AutoSearch
+
+        return AutoSearch(self)
+
     def search(self, strategy_hash: str, dataset_version: str, space: dict | None = None, workers: int = 0,
                resume: str | None = None, progress=None, should_stop=None) -> dict:
         from quantlab.services.batch import run_search
@@ -216,6 +222,8 @@ class Lab:
         for p in sorted(self.ws.path("examples").glob("*.qls.yaml")) + sorted(self.ws.path("strategies").glob("*/*.qls.yaml")):
             try:
                 spec = yaml.safe_load(p.read_text(encoding="utf-8"))
+                if "combo" in (spec.get("rules") or {}):
+                    continue  # automatic search groups have their own page
                 found.setdefault(f"{spec['strategy']['id']}@{spec['strategy']['version']}", p)
             except Exception:  # an unreadable file is shown nowhere rather than crashing the list
                 continue

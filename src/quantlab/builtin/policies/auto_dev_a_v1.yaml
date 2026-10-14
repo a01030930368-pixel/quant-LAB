@@ -1,0 +1,60 @@
+# Validation policy for AUTO-DEVA — automatic strategy search on 선진국 A (developed-market country ETFs (Japan, Germany, UK, Canada, Australia, France, Switzerland, Hong Kong, Singapore)).
+# Written 2026-10-14 before any data for this group was downloaded by the app or seen by Claude
+# (except as noted). Splits, costs and gates follow oversold_intl_v1; the benchmark is SPY because the
+# user asked that candidates beat SPY buy-and-hold.
+# Same ETFs and the same 2017+ holdout as N4X-INTL-1X and N5X-INTL-DEEP (both run on TRAIN+VALIDATION only,
+# holdout unopened); their two exploratory runs are added to the trial count (prior_trials).
+# Frozen: the registry stores its hash; changing anything requires version: 2.
+policy_id: auto_dev_a
+version: 1
+strategy_family: AUTO-DEVA
+universe: [EWJ, EWG, EWU, EWC, EWA, EWQ, EWL, EWH, EWS, SPY, BIL]
+benchmark_symbol: SPY
+risk_free_symbol: BIL
+initial_cash: 100000
+
+splits:                         # BIL (risk-free proxy) starts 2007-05-30
+  train: ["2007-06-01", "2012-12-31"]
+  validation: ["2013-01-01", "2016-12-31"]
+  holdout: ["2017-01-01", null]
+  forward_holdout_start: "2026-10-15"
+
+costs:
+  commission_bps: 25.0          # user's standing rule (0.25% one-way)
+  slippage_bps: 5.0
+  fixed_fee: 0.0
+
+gate1:
+  leak_test_cutpoints: 5
+  leak_test_seed: 20261014
+
+gate2:
+  min_sharpe_diff: -0.10
+  max_mdd_ratio: 0.90
+  rule: "PASS if sharpe_diff >= min_sharpe_diff OR mdd_ratio <= max_mdd_ratio, else FAIL"
+
+gate3:
+  min_sharpe_diff: 0.0
+  bootstrap: {block: 63, n_boot: 10000, seed: 20261014, max_p_value: 0.10}
+  max_mdd_ratio: 0.80
+  min_position_changes: 6
+  min_sessions: 504
+
+gate4_partial:
+  stress_cost_multiplier: 2.0
+  stress_min_sharpe_diff: 0.0
+  neighbor_params: {}            # neighbours are checked during the search (TRAIN+VALIDATION), see auto_search
+  neighbor_min_sharpe_diff: 0.0
+
+auto_search:                    # filters of the automatic search (design doc, user-approved 2026-10-14)
+  trials_per_run: 3000
+  order_seed: 20261014          # fixed shuffle of the full grid; each run takes the next untried combinations
+  prior_trials: 2
+  min_trades_train: 40
+  min_trades_validation: 20
+  min_gross_per_trade: 0.012    # twice the 0.6% round trip
+  stress_cost_multiplier: 2.0   # CAGR must stay above 0 at twice the costs
+  max_drawdown_floor: -0.35
+  beat_symbol: SPY              # CAGR above SPY buy-and-hold over the same TRAIN+VALIDATION window
+  alpha: 0.05                   # one-sided; Bonferroni over the family's trial count (incl. prior_trials)
+  neighbour_min_share: 0.5

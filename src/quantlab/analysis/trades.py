@@ -33,25 +33,34 @@ def episodes(res: BacktestResult, data: MarketData | None = None, start=None, en
     rows = []
     for sym in sh.columns:
         held = sh[sym].to_numpy() > 1e-12
-        t = 0
-        while t < len(cal):
-            if not held[t]:
-                t += 1
-                continue
-            s = t
-            while t < len(cal) and held[t]:
-                t += 1
-            e = t  # first flat session (exit fill day), or len(cal) if still open
+        if not held.any():
+            continue
+        ft_all = tr[tr["symbol"] == sym]
+        f_date = ft_all["date"].to_numpy()
+        f_qty = ft_all["qty"].to_numpy(float)
+        f_open = ft_all["open"].to_numpy(float)
+        f_notional = ft_all["notional"].to_numpy(float)
+        f_comm = ft_all["commission"].to_numpy(float)
+        dv = divs[divs["symbol"] == sym] if len(divs) else divs
+        d_date = dv["date"].to_numpy() if len(dv) else np.array([], dtype="datetime64[ns]")
+        d_amt = dv["amount"].to_numpy(float) if len(dv) else np.array([])
+        edges = np.flatnonzero(np.diff(np.r_[0, held.astype(np.int8), 0]))
+        for s, e in zip(edges[::2], edges[1::2]):
+            # e: first flat session (exit fill day), or len(cal) if still open
             first, last = cal[s], cal[e] if e < len(cal) else None
-            in_ep = (tr["symbol"] == sym) & (tr["date"] >= first) & ((tr["date"] <= last) if last is not None else True)
-            ft = tr.loc[in_ep]
-            buys, sells = ft[ft["qty"] > 0], ft[ft["qty"] < 0]
-            gross_in = float((buys["qty"] * buys["open"]).sum())
-            gross_out = float((-sells["qty"] * sells["open"]).sum())
-            net_in = float(buys["notional"].sum() + buys["commission"].sum())
-            net_out = float(-sells["notional"].sum() - sells["commission"].sum())
-            d = divs[(divs["symbol"] == sym) & (divs["date"] >= first) &
-                     ((divs["date"] < last) if last is not None else True)]["amount"].sum() if len(divs) else 0.0
+            lo = np.searchsorted(f_date, first.to_datetime64(), "left")
+            hi = np.searchsorted(f_date, last.to_datetime64(), "right") if last is not None else len(f_date)
+            q, o, nt, cm = f_qty[lo:hi], f_open[lo:hi], f_notional[lo:hi], f_comm[lo:hi]
+            buy, sell = q > 0, q < 0
+            gross_in = float((q[buy] * o[buy]).sum())
+            gross_out = float((-q[sell] * o[sell]).sum())
+            net_in = float(nt[buy].sum() + cm[buy].sum())
+            net_out = float(-nt[sell].sum() - cm[sell].sum())
+            d = 0.0
+            if len(d_amt):
+                dlo = np.searchsorted(d_date, first.to_datetime64(), "left")
+                dhi = np.searchsorted(d_date, last.to_datetime64(), "left") if last is not None else len(d_date)
+                d = float(d_amt[dlo:dhi].sum())
             mark = 0.0
             if last is None:  # still open: mark at the last close
                 c = cal[-1]
@@ -59,7 +68,7 @@ def episodes(res: BacktestResult, data: MarketData | None = None, start=None, en
                 mark = float(sh.loc[c, sym] * px)
             if gross_in <= 0:
                 continue
-            rows.append({"symbol": sym, "entry": first, "exit": last, "sessions": e - s,
+            rows.append({"symbol": sym, "entry": first, "exit": last, "sessions": int(e - s),
                          "gross": (gross_out + d + mark) / gross_in - 1, "net": (net_out + d + mark) / net_in - 1,
                          "open_at_end": last is None})
     out = pd.DataFrame(rows, columns=["symbol", "entry", "exit", "sessions", "gross", "net", "open_at_end"])

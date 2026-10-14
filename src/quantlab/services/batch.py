@@ -61,6 +61,8 @@ def run_search(lab, strategy_hash: str, dataset_version: str, space: dict | None
     from quantlab.validation.engine import dev_data
 
     loaded = lab.loaded_strategy(strategy_hash)
+    if "combo" in loaded.spec["rules"]:
+        raise ValueError("자동 탐색 전략은 '자동 탐색' 화면에서 실행합니다 (조합 순서와 걸러내는 기준이 정해져 있음)")
     policy_hash, policy = lab.policy_for(loaded)
     reg = lab.registry
     if resume:

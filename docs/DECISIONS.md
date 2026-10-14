@@ -169,3 +169,35 @@ sessions, slots sizing 1/5. The 4-setting search space and the Gate 4 neighbours
 spec and policy `oversold_intl_deep_v1` (splits, gates and costs copied from oversold_intl_v1)
 before any run. Chosen after seeing N4X's TRAIN+VALIDATION results only; the 2017+ holdout of
 these ETFs remains unopened. Pass bar per trade: +1.2% gross (survives Gate 4's 2x cost).
+
+## D-020 · 2026-10-14 · Automatic strategy search inside the app
+N5X-INTL-DEEP also lost to costs on the user's PC (gross +0.02% per trade, net -0.57%, CAGR -1.3%
+vs EFA -0.9%; not taken to the holdout). The user asked for an app that keeps testing strategies
+without Claude, approved the design doc (building blocks, filters, trial-count correction) and
+added: MACD and 5/20/60/120-day moving averages as entry signals, "must beat SPY buy-and-hold",
+3,000 combinations per run, and more ETF groups.
+
+- Building blocks: `quantlab.strategies.combo`, catalog 1 (34 entries, 6 trend filters, 7 exits,
+  max hold 5/10/20/30, stop 0/10%, take 0/10%; 22,848 combinations per group). A recorded trial
+  always means the same rule: changing a key's meaning needs catalog 2. New indicators (MACD,
+  MA ratio/crosses) are whole-series and causal (`quantlab.strategies.indicators`); combo rules read
+  every indicator that way, in the search and in the final evaluation alike. Hand-written specs
+  keep the windowed calculation, so their recorded results do not change.
+- Groups, each a generator spec AUTO-* plus a policy fixed before its data was downloaded: 선진국 A
+  (the N4X/N5X ETFs; their two runs count as prior trials), 선진국 B, 신흥국, 채권·금·원자재·리츠.
+  US sector ETFs are left out: the prior project saw US stocks 2010-2026. Splits TRAIN 2007-06..2012,
+  VALIDATION 2013..2016, HOLDOUT 2017+; benchmark SPY; costs 0.25% + 5bp.
+- Order: the full grid shuffled with the policy's seed; each run registers its next 3,000 untried
+  combinations before the first runs; an interrupted run is resumed before new ones start.
+- Filters (TRAIN+VALIDATION only, in this order): trades >= 40 TRAIN and >= 20 VALIDATION; gross
+  >= +1.2% per trade; both splits positive; CAGR > 0 at 2x costs; CAGR above SPY buy-and-hold;
+  max drawdown shallower than -35%; net mean positive without the 10 best trades; CAGR positive
+  without the best year; day-clustered net t >= one-sided Bonferroni threshold for the family's
+  trial count (alpha 5%); at least half of the one-step neighbours (adjacent threshold, adjacent
+  max hold) clear trades/gross/splits/2x cost. Neighbours not yet tried are registered and run.
+- Nothing is adopted automatically. The user confirms a candidate and starts its final evaluation;
+  a group's holdout read is logged per family, so a second final evaluation in a group cannot PASS.
+- Trials store their numbers on the trial event (no experiment row per trial); opening a candidate
+  records a normal exploratory backtest. The registry uses WAL so the search can write from its own
+  connection while the window is in use.
+- Charter/protocol wording for large-scale machine search is pending in the charter thread.

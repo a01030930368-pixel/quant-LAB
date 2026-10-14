@@ -120,3 +120,51 @@ def test_home_one_click_backtest_and_final(win, tmp_path, monkeypatch):
     assert "최종 평가" in asked[0]
     formal = [e for e in win.lab.registry.history() if e["kind"] == "formal"]
     assert len(formal) == 1 and win.result.pick.currentData() == formal[0]["experiment_id"]
+
+
+def test_auto_search_page_runs_and_lists_results(win, tmp_path):
+    import numpy as np
+
+    from quantlab.data.quality import exchange_sessions
+    from synthetic import frame
+
+    sessions = exchange_sessions("2007-06-01", "2018-12-31")
+    rng = np.random.default_rng(1)
+    for sym in ["TLT", "IEF", "LQD", "GLD", "SLV", "DBC", "VNQ", "SPY", "BIL"]:
+        close = 50 * np.exp(np.cumsum(rng.normal(0.0002, 0.01, len(sessions))))
+        df = frame(close, close)
+        df.index = sessions
+        p = tmp_path / f"{sym}.csv"
+        df.rename_axis("date").reset_index().to_csv(p, index=False, date_format="%Y-%m-%d")
+        win.lab.import_csv(sym, p)
+    assert list(win.pages)[:2] == ["홈", "자동 탐색"]
+    win.go("자동 탐색")
+    page = win.auto
+    page.choose("AUTO-REAL")
+    assert page.kpi_values[0].text().startswith("0 / ")
+    page.workers.setValue(1)
+    page.limit = 5
+    # "끝나면 계속": a finished run starts the next one by itself; stop the chain after two runs
+    from quantlab.services.autosearch import AutoSearch
+
+    runs = []
+    real = AutoSearch.run
+
+    def counted(self, *a, **k):
+        runs.append(1)
+        if len(runs) == 2:
+            page.keep_going.setChecked(False)
+        return real(self, *a, **k)
+
+    AutoSearch.run = counted
+    try:
+        page.start()
+    finally:
+        AutoSearch.run = real
+    assert len(runs) == 2
+    assert not page.running
+    assert page.summary["done"] >= 10 and page.summary["pending"] == 0
+    assert page.funnel.rowCount() == 10
+    assert win.lab.registry.holdout_ledger() == []
+    # AUTO specs never appear as strategy cards on the home page
+    assert not any("AUTO-" in str(p) for p in win.lab.strategy_files())

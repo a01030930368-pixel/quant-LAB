@@ -29,6 +29,26 @@ def write_synthetic_csvs(folder: Path, seed: int = 0) -> dict[str, Path]:
     return out
 
 
+def write_synthetic_group(folder: Path, seed: int = 1) -> dict[str, Path]:
+    """Random-walk prices for the AUTO-REAL group (the self-test's SPY and BIL come from above)."""
+    import numpy as np
+
+    from quantlab.core.synthetic import frame
+
+    sessions = exchange_sessions("2007-06-01", "2024-12-31")
+    rng = np.random.default_rng(seed)
+    out = {}
+    for sym in ("TLT", "IEF", "LQD", "GLD", "SLV", "DBC", "VNQ"):
+        close = 50 * np.exp(np.cumsum(rng.normal(0.0002, 0.012, len(sessions))))
+        opn = np.r_[close[0], close[:-1]] * np.exp(rng.normal(0, 0.003, len(sessions)))
+        df = frame(opn, close)
+        df.index = sessions
+        p = folder / f"{sym}_synthetic.csv"
+        df.rename_axis("date").reset_index().to_csv(p, index=False, date_format="%Y-%m-%d")
+        out[sym] = p
+    return out
+
+
 def run_selftest(root: str | Path | None = None, log=print) -> dict:
     tmp = None
     if root is None:
@@ -63,6 +83,17 @@ def run_selftest(root: str | Path | None = None, log=print) -> dict:
                 f"DSR {batch['best_dsr']:.3f} over {batch['family_trials']} trials (not adopted automatically)")
             log(f"search {batch['batch_id']}: {batch['done']} trials done")
             steps["batch"] = batch["batch_id"]
+        if hasattr(lab, "auto_search"):
+            # automatic search: a few combinations on synthetic bond/gold/REIT ETFs, two worker processes
+            for sym, path in write_synthetic_group(root).items():
+                lab.import_csv(sym, path)
+            auto = lab.auto_search().run("AUTO-REAL", workers=2, limit=4)
+            log(f"automatic search AUTO-REAL: {auto['done']} done, {auto['failed']} failed, "
+                f"{auto['family_trials']} trials counted, t needed {auto['t_required']:.2f}")
+            if auto["failed"] or auto["done"] < 4 or any(r["strategy_family"] == "AUTO-REAL"
+                                                          for r in lab.registry.holdout_ledger()):
+                raise AssertionError(f"automatic search check failed: {auto['done']} done, {auto['failed']} failed")
+            steps["auto"] = auto["done"]
         lab.confirm_candidate(imp.strategy_hash, note="selftest")
         out = lab.final_evaluation(imp.strategy_hash, version)
         log(f"final evaluation {out.experiment_id}: {out.overall} "

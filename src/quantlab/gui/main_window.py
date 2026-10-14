@@ -699,6 +699,7 @@ class MainWindow(QMainWindow):
     """Top tab bar + pages. 홈/결과 are the one-click flow; 고급 keeps the six step-by-step screens."""
 
     def __init__(self, lab: Lab, sync: bool = False) -> None:
+        from quantlab.gui.autopage import AutoPage
         from quantlab.gui.home import HomePage, ResultPage
 
         super().__init__()
@@ -718,6 +719,7 @@ class MainWindow(QMainWindow):
             self.tabs.addTab(s, name)
         self.home = HomePage(self)
         self.result = ResultPage(self)
+        self.auto = AutoPage(self)
         advanced = QWidget()
         advanced.setObjectName("page")
         al = QVBoxLayout(advanced)
@@ -728,7 +730,7 @@ class MainWindow(QMainWindow):
         al.addWidget(self.tabs)
 
         self.stack = QStackedWidget()
-        self.pages = {"홈": self.home, "결과": self.result, "고급": advanced}
+        self.pages = {"홈": self.home, "자동 탐색": self.auto, "결과": self.result, "고급": advanced}
         top = QWidget()
         top.setObjectName("topbar")
         tl = QHBoxLayout(top)
@@ -780,6 +782,8 @@ class MainWindow(QMainWindow):
     def go(self, name: str) -> None:
         self.stack.setCurrentWidget(self.pages[name])
         self.nav[name].setChecked(True)
+        if name == "자동 탐색":
+            self.auto.refresh()
 
     def show_result(self, experiment_id: str) -> None:
         self.result.select(experiment_id)
@@ -804,6 +808,7 @@ class MainWindow(QMainWindow):
         for s in self.screens:
             for b in s.actions:
                 b.setEnabled(not busy)
+        self.auto._buttons()
         if not busy:
             self.home._idle()
             self.home.refresh()  # restores each card's own enabled state
@@ -818,6 +823,12 @@ class MainWindow(QMainWindow):
         self.result.refresh()
 
     def closeEvent(self, ev):  # noqa: N802 (Qt name)
+        if self.auto.running:
+            if self.ask("자동 탐색이 진행 중입니다. 멈추고 닫을까요? (남은 조합은 다음에 '이어서 하기'로 시험합니다)"):
+                self.auto.stop()
+                self.notify("지금 시험 중인 조합이 끝나면 멈춥니다. 잠시 뒤 다시 닫아 주세요.")
+            ev.ignore()
+            return
         if self.runner.busy:
             self.notify("작업이 끝난 뒤 닫아 주세요.")
             ev.ignore()
