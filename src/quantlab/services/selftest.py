@@ -37,6 +37,9 @@ def run_selftest(root: str | Path | None = None, log=print) -> dict:
     root = Path(root)
     lab = Lab(root / "QuantLab")
     try:
+        from quantlab.core.app_info import app_code_hash, app_version
+
+        log(f"QUANT LAB {app_version()} code {app_code_hash()[:16]}")
         csvs = write_synthetic_csvs(root)
         for sym, p in csvs.items():
             rec = lab.import_csv(sym, p)
@@ -54,7 +57,8 @@ def run_selftest(root: str | Path | None = None, log=print) -> dict:
             f"on {bt.metrics['window'][0]}..{bt.metrics['window'][1]}")
         steps = {"dataset": version, "strategy_hash": imp.strategy_hash, "backtest": bt.experiment_id}
         if hasattr(lab, "search"):
-            batch = lab.search(imp.strategy_hash, version, workers=1)
+            # two worker processes: also proves spawned workers start in a frozen build
+            batch = lab.search(imp.strategy_hash, version, workers=2)
             log(f"best trial {batch['best']['params']} sharpe diff {batch['best']['sharpe_diff']:.3f}, "
                 f"DSR {batch['best_dsr']:.3f} over {batch['family_trials']} trials (not adopted automatically)")
             log(f"search {batch['batch_id']}: {batch['done']} trials done")

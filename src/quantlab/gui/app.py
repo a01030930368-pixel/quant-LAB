@@ -12,15 +12,27 @@ from pathlib import Path
 
 
 def _selftest() -> int:
+    """A windowed .exe has no console: the log goes to QUANTLAB_SELFTEST_LOG or the temp folder."""
+    import os
+    import tempfile
+
     from quantlab.services.selftest import run_selftest
 
-    try:
-        res = run_selftest(log=lambda s: print(s, flush=True))
-    except Exception as e:  # noqa: BLE001 - CI reads the exit code
-        print(f"SELFTEST FAILED: {type(e).__name__}: {e}", flush=True)
-        return 1
-    print("SELFTEST OK" if res.get("ok") else "SELFTEST FAILED", flush=True)
-    return 0 if res.get("ok") else 1
+    log_path = Path(os.environ.get("QUANTLAB_SELFTEST_LOG", Path(tempfile.gettempdir()) / "quantlab-selftest.log"))
+    with open(log_path, "w", encoding="utf-8") as fh:
+        def log(line: str) -> None:
+            fh.write(line + "\n")
+            fh.flush()
+            if sys.stdout is not None:
+                print(line, flush=True)
+
+        try:
+            res = run_selftest(log=log)
+        except Exception as e:  # noqa: BLE001 - CI reads the exit code
+            log(f"SELFTEST FAILED: {type(e).__name__}: {e}")
+            return 1
+        log("SELFTEST OK" if res.get("ok") else "SELFTEST FAILED")
+        return 0 if res.get("ok") else 1
 
 
 def choose_workspace(settings, parent=None) -> Path | None:

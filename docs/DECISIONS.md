@@ -129,3 +129,13 @@ user's browser instead of an embedded view. Long actions run one at a time on a 
 meanwhile). The final evaluation asks for explicit confirmation showing the confirmed parameters
 and the family's previous holdout reads. The first run asks for a work folder (stored in
 QSettings). Engine modules never import Qt (tested in a subprocess).
+
+## D-016 · 2026-10-14 · Windows packaging and CI
+PyInstaller folder build (`packaging/QuantLab.spec`, windowed `QuantLab.exe`). The quantlab .py
+sources ship inside the bundle as data, so `app_code_hash` of a frozen build equals the hash of
+the same checkout (verified: both 54daeb343d06f535 on the Linux build). `QuantLab.exe
+--selftest` runs the synthetic end-to-end flow with two spawned search workers and writes its
+log to QUANTLAB_SELFTEST_LOG (a windowed exe has no console). GitHub Actions
+(`windows-app.yml`, public repo so minutes are free) runs the tests, builds, removes Python from
+PATH, runs the self-test and uploads the zipped app as an artifact for 30 days. The bundle is
+large (~0.5 GB unpacked, mostly pyarrow and Qt); trimming is deferred until it matters.

@@ -1,0 +1,47 @@
+name: windows-app
+
+# Builds the Windows desktop app on a clean runner and proves it works without a Python
+# installation on PATH: the packaged QuantLab.exe must pass --selftest (synthetic data,
+# full flow, no network). Plan M14.
+
+on:
+  push:
+    branches: ["**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-build:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: uv sync --locked
+      - name: Tests
+        run: uv run pytest -q
+      - name: Build app
+        run: uv run pyinstaller packaging/QuantLab.spec --noconfirm --distpath dist --workpath build
+      - name: Self-test the packaged app (no Python on PATH)
+        shell: pwsh
+        run: |
+          $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -notmatch 'Python|uv|\.venv' }) -join ';'
+          $env:QUANTLAB_SELFTEST_LOG = "$env:RUNNER_TEMP\selftest.log"
+          $p = Start-Process -FilePath "dist\QuantLab\QuantLab.exe" -ArgumentList "--selftest" -Wait -PassThru
+          Get-Content $env:QUANTLAB_SELFTEST_LOG
+          if ($p.ExitCode -ne 0) { throw "selftest failed with exit code $($p.ExitCode)" }
+      - name: Zip
+        shell: pwsh
+        run: Compress-Archive -Path dist\QuantLab -DestinationPath QuantLab-windows.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: QuantLab-windows
+          path: QuantLab-windows.zip
+          retention-days: 30
