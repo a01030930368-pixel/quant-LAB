@@ -1,0 +1,33 @@
+[project]
+name = "quantlab"
+version = "0.1.0"
+description = "QUANT LAB research engine (MVP)"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "numpy>=2.0",
+    "pandas>=2.2",
+    "pyarrow>=16",
+    "scipy>=1.13",
+    "statsmodels>=0.14",
+    "pyyaml>=6.0",
+    "requests>=2.32",
+    "exchange-calendars>=4.5",
+]
+
+[project.scripts]
+quantlab = "quantlab.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8", "hypothesis>=6.100"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/quantlab"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

@@ -1,0 +1,39 @@
+# Decision log
+
+Technical decisions made under 04_DEVELOPMENT_HANDOFF §2 (Claude decides; records rationale).
+Scope-level defaults are in `/mnt/project-files/plans/MVP_EXECUTION_PLAN.md` §1–§2; this file
+records implementation-level choices. Newest last. Never edit past entries; supersede them.
+
+## D-001 · 2026-10-14 · In-house daily backtester
+Event-driven, daily bars, long-only, no leverage, target-weight interface. Off-the-shelf engines
+(backtrader, vectorbt, zipline forks) cost more to audit for fill assumptions than ~200 lines
+cost to write and test. Acceptance per 03 §2.1: independent reference implementation
+(`backtesting/reference.py`, value-based instead of share-based) must match to 1e-9.
+
+## D-002 · 2026-10-14 · Unadjusted prices + explicit corporate actions
+Engine consumes raw OHLC plus `dividend` and `split` columns, credits dividends as cash on the
+ex-date and restates shares (and open orders) on splits. Back-adjusted prices embed future
+dividends and would hide accounting errors. Strategies that need a return series use
+`total_return_index`, built forward so later data never revises earlier values.
+Known simplification: dividends are credited on the ex-date, not the pay date.
+
+## D-003 · 2026-10-14 · Order timing and sizing
+Signal at close t → target share count computed from close-t equity and close-t price → fills at
+open t+1, sells before buys, buys capped by available cash (integer shares by default). If the
+asset has no open price that day the order carries forward. Slippage worsens the fill price;
+commission = bps of notional + fixed fee.
+
+## D-004 · 2026-10-14 · Calendar knowledge is not look-ahead
+`MarketView.is_last_session_of_month` reads the next session date from the shared calendar.
+Exchange schedules are published in advance, so this is information available at t.
+
+## D-005 · 2026-10-14 · Code location (provisional)
+Until the user picks a code host, the repository lives at `/mnt/project-files/quant-lab` with a
+local git history. The virtualenv lives outside the shared folder (`UV_PROJECT_ENVIRONMENT`).
+On the network mount, run commands from `/mnt/attach/project-files/quant-lab` (the symlinked
+path breaks `os.getcwd()`).
+
+## D-006 · 2026-10-14 · Test adequacy check by mutation
+After the M3 suite passed on first run, six deliberate bugs were injected one at a time (skip
+dividend, no split restatement of open orders, favourable slippage sign, mark-to-market at open,
+strategy sees bar t+1, commission not charged). Each was caught by the suite.

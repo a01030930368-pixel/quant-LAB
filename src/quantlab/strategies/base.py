@@ -1,0 +1,78 @@
+"""Strategy interface and the point-in-time market view.
+
+A strategy only ever sees a `MarketView` positioned at the close of day t.
+It cannot read prices after t, cannot place fills, and cannot see metrics or
+validation settings. It returns target portfolio weights; the backtester turns
+those into orders that fill at the NEXT trading day's open (protocol 제8조).
+"""
+
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from typing import Any, Mapping
+
+import pandas as pd
+
+from quantlab.core.hashing import stable_hash
+from quantlab.core.market_data import MarketData, total_return_index
+
+
+class LookaheadError(RuntimeError):
+    """Raised when strategy code asks for information dated after the current bar."""
+
+
+class MarketView:
+    __slots__ = ("_data", "_t")
+
+    def __init__(self, data: MarketData, t: int) -> None:
+        self._data = data
+        self._t = t
+
+    @property
+    def now(self) -> pd.Timestamp:
+        return self._data.calendar[self._t]
+
+    @property
+    def symbols(self) -> list[str]:
+        return self._data.symbols
+
+    def _frame(self, symbol: str) -> pd.DataFrame:
+        return self._data.frames[symbol].iloc[: self._t + 1]
+
+    def history(self, symbol: str, field: str = "close") -> pd.Series:
+        return self._frame(symbol)[field].copy()
+
+    def total_return(self, symbol: str) -> pd.Series:
+        return total_return_index(self._frame(symbol))
+
+    def at(self, symbol: str, date, field: str = "close") -> float:
+        date = pd.Timestamp(date)
+        if date > self.now:
+            raise LookaheadError(f"requested {symbol} {field} on {date.date()} at bar {self.now.date()}")
+        return float(self._frame(symbol).loc[date, field])
+
+    # The exchange schedule is published in advance, so knowing whether the
+    # next session falls in a new month is not look-ahead.
+    def is_last_session_of_month(self) -> bool:
+        cal = self._data.calendar
+        if self._t + 1 >= len(cal):
+            return True
+        return cal[self._t + 1].month != cal[self._t].month
+
+
+class Strategy(ABC):
+    strategy_id: str = "UNSET"
+    version: str = "0"
+
+    def __init__(self, **params: Any) -> None:
+        self.params = dict(params)
+
+    @abstractmethod
+    def on_bar(self, view: MarketView) -> Mapping[str, float] | None:
+        """Return target weights (long-only, sum <= 1) or None to keep current holdings."""
+
+    def describe(self) -> dict[str, Any]:
+        return {"strategy_id": self.strategy_id, "version": self.version, "params": self.params}
+
+    def config_hash(self) -> str:
+        return stable_hash(self.describe())

@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.hypothesis/
+# Market data is versioned by manifest hash, not by git
+data/raw/*
+data/processed/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+# Large experiment artifacts; summaries and reports are tracked
+experiments/**/*.parquet
+registry.sqlite
+.env
