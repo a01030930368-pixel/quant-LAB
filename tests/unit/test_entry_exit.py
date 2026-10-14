@@ -183,3 +183,35 @@ def test_episode_stats_hand_case():
     assert ep["net"][0] == pytest.approx(97 * (1 - 0.0025) / (91 * (1 + 0.0025)) - 1)
     st = trade_stats(ep)
     assert st["n"] == 1 and st["t_day_clustered"] is None
+
+
+def test_slots_sizing_does_not_trade_positions_already_held():
+    """{slots: K}: a second entry buys only the new symbol; the first position is not resized,
+    even though its weight drifted (equal_active, by design, re-sizes every open position)."""
+    a = [100, 100, 90, 120, 120, 120, 120, 120]   # A drops day 2 -> bought day 3, then rallies
+    b = [100, 100, 100, 100, 90, 90, 90, 90]      # B drops day 4 -> bought day 5
+    d = MarketData.from_frames({"A": frame(a, a), "B": frame(b, b)})
+    legs = [dict(leg([DROP], max_hold=10), name="a"), dict(leg([DROP], max_hold=10), name="b", trade="B")]
+    res = run_backtest(make(legs, symbols=("A", "B"), sizing={"slots": 2}), d, ZERO)
+    assert list(res.trades["symbol"]) == ["A", "B"]          # no top-up or trim of A on day 5
+    assert res.trades["qty"].iloc[0] == pytest.approx(5_000 / 90)
+    eq = make(legs, symbols=("A", "B"))
+    res2 = run_backtest(eq, d, ZERO)
+    assert list(res2.trades["symbol"]) == ["A", "A", "B"]     # equal_active trims A to make room for B
+
+
+def test_partial_weights_leave_unlisted_positions_alone():
+    from quantlab.strategies.base import PartialWeights, Strategy
+
+    class Two(Strategy):
+        day = -1
+
+        def on_bar(self, view):
+            self.day += 1
+            return {0: {"A": 0.5, "B": 0.5}, 2: PartialWeights({"B": 0.0})}.get(self.day)
+
+    p = [100, 100, 100, 100, 100]
+    d = MarketData.from_frames({"A": frame(p, p), "B": frame(p, p)})
+    res = run_backtest(Two(), d, ZERO)
+    assert res.shares["A"].iloc[-1] == pytest.approx(50) and res.shares["B"].iloc[-1] == 0
+    assert list(res.trades["symbol"]) == ["A", "B", "B"]

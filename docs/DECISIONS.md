@@ -150,3 +150,13 @@ recorded and frozen (no search space); signals on each ETF itself; decide at clo
 open. Policy oversold_intl_v1 keeps every threshold and cost of trend_timing_v1; splits TRAIN
 2007-06..2012, VALIDATION 2013..2016, HOLDOUT 2017-01 onward, fixed before any data for these
 symbols was downloaded. Evidence is only partly independent (EFA/EEM were seen in b35).
+
+## D-018 · 2026-10-14 · Slots sizing trades only the legs that change
+The N4X-INTL-1X run on the user's PC (gross +0.34% per trade, net -0.26%, CAGR -26%) spent 26%
+of its costs on re-sizing positions it already held: every entry or exit re-targeted all
+symbols to the new equal weights. That is inherent to `equal_active` and stays as is (results
+recorded under it remain reproducible). `{slots: K}` now sizes a position once, at entry, to 1/K
+of equity and leaves the other holdings untouched when a leg opens or closes, as a swing
+trader would. Mechanism: strategies may return `PartialWeights` (only listed symbols are
+re-targeted); a plain dict still means "every symbol". Experiments run with slots sizing
+before this change will not reproduce bit-for-bit under the new code; none were recorded.

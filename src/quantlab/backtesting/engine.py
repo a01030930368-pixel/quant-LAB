@@ -22,7 +22,7 @@ import numpy as np
 import pandas as pd
 
 from quantlab.core.market_data import MarketData
-from quantlab.strategies.base import MarketView, Strategy
+from quantlab.strategies.base import MarketView, PartialWeights, Strategy
 
 BPS = 1e-4
 _EPS = 1e-9
@@ -71,7 +71,8 @@ class AccountingError(RuntimeError):
 
 
 def _validate_weights(weights, symbols) -> dict[str, float]:
-    w = {s: float(weights.get(s, 0.0)) for s in symbols}
+    """Full targets for every symbol; PartialWeights keep only the symbols they list."""
+    w = {s: float(weights.get(s, 0.0)) for s in symbols if not isinstance(weights, PartialWeights) or s in weights}
     unknown = set(weights) - set(symbols)
     if unknown:
         raise ValueError(f"unknown symbols in target weights: {sorted(unknown)}")
@@ -168,8 +169,13 @@ def run_backtest(strategy: Strategy, data: MarketData, config: BacktestConfig | 
             if target is not None:
                 w = _validate_weights(target, syms)
                 signals.append((date, w))
-                pending = {}
+                if isinstance(target, PartialWeights):  # unlisted symbols keep their orders and shares
+                    pending = {i: q for i, q in pending.items() if syms[i] not in w}
+                else:
+                    pending = {}
                 for i, s in enumerate(syms):
+                    if s not in w:
+                        continue
                     px = closes[t, i]
                     if not np.isfinite(px) or px <= 0:
                         continue

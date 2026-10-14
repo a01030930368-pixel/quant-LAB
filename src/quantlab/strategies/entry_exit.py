@@ -3,7 +3,9 @@
 Each leg trades one symbol, one position at a time:
 
     entry_exit:
-      sizing: equal_active          # or {slots: K}: each open leg holds 1/K
+      sizing: equal_active          # all open legs share equity equally (re-sized on every change)
+                                    # or {slots: K}: each open leg holds 1/K of equity, set once at
+                                    # entry; other positions are not traded when a leg opens/closes
       legs:
         - name: S2
           trade: SPXL               # symbol bought
@@ -45,7 +47,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from quantlab.strategies.base import MarketView, Strategy
+from quantlab.strategies.base import MarketView, PartialWeights, Strategy
 
 INDICATORS = ("close_vs_sma", "close_vs_min", "close_vs_max", "bollinger_z", "rsi", "ibs", "return",
               "down_streak", "relative_return", "session")
@@ -250,6 +252,7 @@ class EntryExitStrategy(Strategy):
         self.sizing = ee.get("sizing", "equal_active")
         self.legs = [_Leg(leg) for leg in ee["legs"]]
         self.trades: list[dict] = []
+        self._last_w: dict[str, float] = {}
 
     def describe(self) -> dict:
         return {"strategy_id": self.strategy_id, "version": self.version, "params": self.params, "rules": self.rules}
@@ -291,7 +294,12 @@ class EntryExitStrategy(Strategy):
                 changed = True
         if not changed:
             return None
-        return self._weights()
+        w = self._weights()
+        if self.sizing == "equal_active":
+            return w
+        moved = PartialWeights({k: v for k, v in w.items() if abs(v - self._last_w.get(k, 0.0)) > 1e-12})
+        self._last_w = w
+        return moved or None
 
     def _weights(self) -> dict[str, float]:
         w = {s: 0.0 for s in self.symbols}
