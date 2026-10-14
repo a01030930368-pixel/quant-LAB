@@ -37,3 +37,20 @@ path breaks `os.getcwd()`).
 After the M3 suite passed on first run, six deliberate bugs were injected one at a time (skip
 dividend, no split restatement of open orders, favourable slippage sign, mark-to-market at open,
 strategy sees bar t+1, commission not charged). Each was caught by the suite.
+
+## D-007 · 2026-10-14 · Leak detection has two layers (gap found by a control test)
+The perturbation test (alter prices after a cut, decisions before it must not change) missed a
+control strategy that read prices from a closure over the full dataset: perturbing the view's data
+cannot affect data the strategy holds elsewhere. Added `isolation_check` to Gate 1: strategy
+methods may not capture or reference DataFrame/Series/ndarray/MarketData objects via closures or
+module globals, nor use `_data`, `read_*` or `urlopen`. Both layers have control tests. Neither is a
+security boundary; a determined strategy can still read files. Phase 4 needs process-level isolation.
+
+## D-008 · 2026-10-14 · Synthetic PASS control and what it says about test power
+Control market: monthly Markov regimes (bull +1.5%/mo σ3%, bear −8%/mo σ6%, stay 0.97/0.93).
+Even here, the frozen gates gave PASS on only about half of seeds: when the 8-year holdout happened
+to contain few bear regimes, trend timing correctly showed no Sharpe advantage, or made fewer than
+6 position changes (HOLD). The engine is behaving as designed; the lesson is that a single-asset
+monthly timing rule has low statistical power over one holdout window. Expect HOLD/FAIL on real SPY
+and prefer higher-breadth hypotheses (multi-asset) next. The control test uses seed 0, whose holdout
+contains bear regimes; this choice was made on synthetic data only.

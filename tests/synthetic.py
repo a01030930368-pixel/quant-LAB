@@ -42,3 +42,29 @@ def random_market(seed: int, n: int = 300, symbols=("AAA", "BBB"), start="2015-0
         close, opn, div = close / factor, opn / factor, div / factor
         frames[sym] = frame(opn, close, div, split, start=start)
     return MarketData.from_frames(frames)
+
+
+def regime_market(seed: int, start="2000-01-03", end="2023-12-29", bull=(0.015, 0.03), bear=(-0.08, 0.06),
+                  stay=(0.97, 0.93), risk="SPY", cash="BIL") -> MarketData:
+    """Monthly Markov regimes (persistent bull/bear) on daily bars: a market where
+    trend following has a genuine, built-in edge. Used as the PASS control."""
+    rng = np.random.default_rng(seed)
+    idx = pd.bdate_range(start, end)
+    months = pd.PeriodIndex(idx, freq="M")
+    uniq = months.unique()
+    state, states = 0, {}
+    for mth in uniq:
+        states[mth] = state
+        if rng.random() > stay[state]:
+            state = 1 - state
+    mu = np.array([(bull, bear)[states[mth]][0] for mth in months]) / 21
+    sd = np.array([(bull, bear)[states[mth]][1] for mth in months]) / np.sqrt(21)
+    ret = rng.normal(mu, sd)
+    close = 100 * np.exp(np.cumsum(ret))
+    opn = np.r_[close[0], close[:-1]] * np.exp(rng.normal(0, 0.002, len(idx)))
+    spy = frame(opn, close, start=start)
+    spy.index = idx
+    c = 50 * np.exp(np.cumsum(np.full(len(idx), 0.0001)))
+    bil = frame(c, c, start=start)
+    bil.index = idx
+    return MarketData.from_frames({risk: spy, cash: bil})

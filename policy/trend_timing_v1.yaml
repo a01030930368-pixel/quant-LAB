@@ -1,0 +1,44 @@
+# Validation policy for the TREND_TIMING_SMA family (MVP baseline).
+# Written 2026-10-14 BEFORE any market data was downloaded for this project.
+# Frozen: the registry stores its hash; changing anything requires version: 2,
+# and results under version 1 stay as they are (protocol 제23~24조).
+policy_id: trend_timing
+version: 1
+strategy_family: TREND_TIMING_SMA
+universe: [SPY, BIL]
+benchmark_symbol: SPY          # buy-and-hold through the same engine and costs
+risk_free_symbol: BIL          # total-return of BIL is the risk-free proxy
+initial_cash: 100000
+
+splits:
+  train: ["2007-06-01", "2013-12-31"]
+  validation: ["2014-01-01", "2018-12-31"]
+  holdout: ["2019-01-01", null]      # null = last available date
+  forward_holdout_start: "2026-10-15" # data accumulating after registration
+
+costs:                  # one-way, applied to every fill
+  commission_bps: 0.0
+  slippage_bps: 5.0
+  fixed_fee: 0.0
+
+gate1:
+  leak_test_cutpoints: 5
+  leak_test_seed: 20261014
+
+gate2:                  # exploratory value on TRAIN+VALIDATION; failing here leaves the holdout unopened
+  min_sharpe_diff: -0.10       # strategy Sharpe - benchmark Sharpe (annualized, excess of rf)
+  max_mdd_ratio: 0.90          # strategy MDD / benchmark MDD
+  rule: "PASS if sharpe_diff >= min_sharpe_diff OR mdd_ratio <= max_mdd_ratio, else FAIL"
+
+gate3:                  # independent evaluation on HOLDOUT, net of base costs
+  min_sharpe_diff: 0.0
+  bootstrap: {block: 63, n_boot: 10000, seed: 20261014, max_p_value: 0.10}
+  max_mdd_ratio: 0.80
+  min_position_changes: 6      # fewer -> HOLD (insufficient evidence)
+  min_sessions: 504
+
+gate4_partial:          # evaluated only if gate 3 passes; failure -> HOLD
+  stress_slippage_bps: 25.0
+  stress_min_sharpe_diff: 0.0
+  neighbor_params: {sma_months: [8, 12]}
+  neighbor_min_sharpe_diff: 0.0
