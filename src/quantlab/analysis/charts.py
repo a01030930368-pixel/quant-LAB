@@ -19,11 +19,12 @@ BENCHMARK = "#B0B8C1"
 HOLDOUT = "#FFD158"
 INK = "#4E5968"
 # Reports use the light palette; the app wraps chart creation in `dark()`.
-LIGHT = {"benchmark": BENCHMARK, "ink": INK, "spine": "#E5E8EB", "grid": "#F2F4F6", "rc": {}}
-DARK = {"benchmark": "#5E5E6A", "ink": "#9E9EA8", "spine": "#2C2C35", "grid": "#26262E",
-        "rc": {"figure.facecolor": "#1C1C22", "axes.facecolor": "#1C1C22", "savefig.facecolor": "#1C1C22",
-               "text.color": "#B0B0BA", "axes.labelcolor": "#B0B0BA", "xtick.color": "#9E9EA8",
-               "ytick.color": "#9E9EA8", "axes.edgecolor": "#2C2C35", "legend.labelcolor": "#B0B0BA"}}
+LIGHT = {"strategy": STRATEGY, "benchmark": BENCHMARK, "ink": INK, "spine": "#E5E8EB", "grid": "#F2F4F6", "rc": {}}
+# app (trading-terminal look): amber strategy line on the pane color
+DARK = {"strategy": "#F2A93B", "benchmark": "#56606C", "ink": "#8C96A3", "spine": "#1F262E", "grid": "#182027",
+        "rc": {"figure.facecolor": "#11151A", "axes.facecolor": "#11151A", "savefig.facecolor": "#11151A",
+               "text.color": "#B6BEC9", "axes.labelcolor": "#B6BEC9", "xtick.color": "#8C96A3",
+               "ytick.color": "#8C96A3", "axes.edgecolor": "#1F262E", "legend.labelcolor": "#B6BEC9"}}
 _P = LIGHT
 
 
@@ -63,7 +64,7 @@ def equity(eq: pd.DataFrame, holdout_start=None, title="Cumulative return (log s
     ax = fig.add_subplot()
     norm = eq / eq.iloc[0]
     ax.plot(norm.index, norm["benchmark"], color=_P["benchmark"], lw=1.2, label=names["benchmark"])
-    ax.plot(norm.index, norm["strategy"], color=STRATEGY, lw=1.8, label=names["strategy"])
+    ax.plot(norm.index, norm["strategy"], color=_P["strategy"], lw=1.8, label=names["strategy"])
     if holdout_start is not None:
         ax.axvspan(pd.Timestamp(holdout_start), norm.index[-1], color=HOLDOUT, alpha=0.18, lw=0, label=names["holdout"])
     ax.set_yscale("log")
@@ -80,7 +81,7 @@ def equity(eq: pd.DataFrame, holdout_start=None, title="Cumulative return (log s
 def drawdown(eq: pd.DataFrame, title="Drawdown", names=EN) -> Figure:
     fig = _fig(8.0, 2.6)
     ax = fig.add_subplot()
-    for col, color in (("benchmark", _P["benchmark"]), ("strategy", STRATEGY)):
+    for col, color in (("benchmark", _P["benchmark"]), ("strategy", _P["strategy"])):
         dd = eq[col] / eq[col].cummax() - 1
         ax.plot(dd.index, dd * 100, color=color, lw=1.2, label=names[col])
     ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: f"{y:.0f}%"))
@@ -127,7 +128,7 @@ def parameter_sensitivity(rows: list[dict], metric="sharpe_diff", title=None) ->
     if len(names) == 1:
         xs = [r["params"][names[0]] for r in done]
         order = np.argsort(xs)
-        ax.plot(np.array(xs)[order], np.array([r[metric] for r in done])[order], marker="o", color=STRATEGY)
+        ax.plot(np.array(xs)[order], np.array([r[metric] for r in done])[order], marker="o", color=_P["strategy"])
         ax.axhline(0, color=BENCHMARK, lw=0.8)
         ax.set_xlabel(names[0])
         _clean(ax)

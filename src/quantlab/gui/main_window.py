@@ -149,7 +149,7 @@ def _table() -> QTableWidget:
 def _note(text: str) -> QLabel:
     lab = QLabel(text)
     lab.setWordWrap(True)
-    lab.setStyleSheet("color: #555;")
+    lab.setObjectName("muted")
     return lab
 
 
@@ -696,7 +696,7 @@ class HistoryScreen(Screen):
 
 # ----------------------------------------------------------------------------- window
 class MainWindow(QMainWindow):
-    """Sidebar + pages. 홈/결과 are the one-click flow; 고급 keeps the six step-by-step screens."""
+    """Top tab bar + pages. 홈/결과 are the one-click flow; 고급 keeps the six step-by-step screens."""
 
     def __init__(self, lab: Lab, sync: bool = False) -> None:
         from quantlab.gui.home import HomePage, ResultPage
@@ -721,7 +721,7 @@ class MainWindow(QMainWindow):
         advanced = QWidget()
         advanced.setObjectName("page")
         al = QVBoxLayout(advanced)
-        al.setContentsMargins(24, 20, 24, 12)
+        al.setContentsMargins(14, 12, 14, 12)
         hint = QLabel("단계별로 직접 조작하는 화면입니다. 평소에는 홈에서 버튼 하나로 실행하면 됩니다.")
         hint.setObjectName("muted")
         al.addWidget(hint)
@@ -729,15 +729,14 @@ class MainWindow(QMainWindow):
 
         self.stack = QStackedWidget()
         self.pages = {"홈": self.home, "결과": self.result, "고급": advanced}
-        side = QWidget()
-        side.setObjectName("sidebar")
-        side.setFixedWidth(196)
-        sl = QVBoxLayout(side)
-        sl.setContentsMargins(12, 22, 12, 16)
-        sl.setSpacing(4)
-        logo = QLabel("QUANT LAB")
+        top = QWidget()
+        top.setObjectName("topbar")
+        tl = QHBoxLayout(top)
+        tl.setContentsMargins(14, 0, 16, 0)
+        tl.setSpacing(0)
+        logo = QLabel("QUANT▸LAB")
         logo.setObjectName("logo")
-        sl.addWidget(logo)
+        tl.addWidget(logo)
         self.nav: dict[str, QPushButton] = {}
         group = QButtonGroup(self)
         for name, page in self.pages.items():
@@ -747,30 +746,30 @@ class MainWindow(QMainWindow):
             b.setCursor(Qt.PointingHandCursor)
             b.clicked.connect(lambda _=False, n=name: self.go(n))
             group.addButton(b)
-            sl.addWidget(b)
+            tl.addWidget(b)
             self.nav[name] = b
-        sl.addStretch(1)
+        tl.addStretch(1)
         from quantlab.core.app_info import build_label
 
-        # one line per label: a wrapped multi-line label here was clipped on Windows (version line hidden)
-        self.version_label = QLabel(build_label())
-        self.version_label.setObjectName("muted")
-        sl.addWidget(self.version_label)
-        sl.addSpacing(8)
-        head = QLabel("작업 폴더")
-        head.setObjectName("muted")
-        sl.addWidget(head)
         folder = QLabel()
-        folder.setObjectName("muted")
-        folder.setToolTip(str(lab.ws.root))
-        folder.setText(folder.fontMetrics().elidedText(str(lab.ws.root), Qt.ElideMiddle, 168))
-        sl.addWidget(folder)
+        folder.setObjectName("topinfo")
+        folder.setToolTip(f"작업 폴더\n{lab.ws.root}")
+        folder.setText(folder.fontMetrics().elidedText(f"작업 폴더 {lab.ws.root}", Qt.ElideMiddle, 320))
+        tl.addWidget(folder)
+        tl.addSpacing(18)
+        dot = QLabel("●")
+        dot.setObjectName("dot")
+        tl.addWidget(dot)
+        tl.addSpacing(6)
+        self.version_label = QLabel(build_label())
+        self.version_label.setObjectName("topinfo")
+        tl.addWidget(self.version_label)
 
         body = QWidget()
-        bl = QHBoxLayout(body)
+        bl = QVBoxLayout(body)
         bl.setContentsMargins(0, 0, 0, 0)
         bl.setSpacing(0)
-        bl.addWidget(side)
+        bl.addWidget(top)
         bl.addWidget(self.stack, 1)
         self.setCentralWidget(body)
         self.runner.message.connect(self.status)

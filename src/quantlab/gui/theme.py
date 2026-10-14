@@ -1,78 +1,111 @@
-"""Dark, card-based look (reference: Toss Securities dark mode): raised dark cards on a near-black
-page, one blue action color, large numbers, and Korean market colors (rise = red, fall = blue)."""
+"""Trading-terminal look (design option B): near-black page, flat bordered panes, an amber
+accent, numbers in a fixed-width font so columns line up, and Korean market colors (rise = red,
+fall = blue)."""
 
 from __future__ import annotations
 
-BG = "#101013"
-CARD = "#1C1C22"
-RAISED = "#2A2A33"       # inputs, chips and secondary buttons on a card
-TEXT = "#F2F2F5"
-TEXT2 = "#B0B0BA"
-MUTED = "#7B7B87"
-LINE = "#2C2C35"
-BLUE = "#3182F6"
-BLUE_DARK = "#4B91F7"    # hover: a touch lighter on dark backgrounds
-BLUE_SOFT = "#1B2B45"
-RISE = "#F04452"
-FALL = "#4B91F7"
-VERDICT = {"PASS": ("#2FCA87", "#14322A"), "HOLD": ("#FFA53D", "#3A2A14"), "FAIL": ("#FF5C69", "#3D1A1F"),
-           "INVALID": ("#9E9EA8", "#2A2A33")}
+BG = "#0A0C0F"
+CARD = "#11151A"         # panes
+RAISED = "#1A2027"       # inputs, chips and secondary buttons inside a pane
+TEXT = "#D9DEE5"
+TEXT2 = "#A7B0BC"
+MUTED = "#7A8491"
+LINE = "#1F262E"
+ACCENT = "#F2A93B"       # amber: primary action, selected tab, strategy line
+ACCENT_HOVER = "#F7BC5E"
+ACCENT_SOFT = "#2A2216"
+BLUE = ACCENT            # older name, kept for callers
+BLUE_SOFT = ACCENT_SOFT
+RISE = "#FF5A5F"
+FALL = "#3B8CFF"
+OK = "#2FBF71"
+VERDICT = {"PASS": ("#2FBF71", "#11291D"), "HOLD": ("#F2A93B", "#2A2216"), "FAIL": ("#FF5A5F", "#2E1517"),
+           "INVALID": ("#8C96A3", "#1A2027")}
 
 FONT = '"Pretendard", "Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans CJK KR", sans-serif'
+MONO = '"IBM Plex Mono", "Consolas", "D2Coding", "Menlo", "DejaVu Sans Mono", monospace'
+MONO_FAMILIES = ["IBM Plex Mono", "Consolas", "D2Coding", "Menlo", "DejaVu Sans Mono"]
 
 QSS = f"""
-* {{ font-family: {FONT}; font-size: 14px; color: {TEXT}; }}
+* {{ font-family: {FONT}; font-size: 13px; color: {TEXT}; }}
 QMainWindow, QWidget#page, QScrollArea, QScrollArea > QWidget > QWidget#page {{ background: {BG}; }}
-QWidget#sidebar {{ background: {CARD}; border-right: 1px solid {LINE}; }}
-QWidget#sidebar QPushButton {{ text-align: left; padding: 11px 16px; border: none; border-radius: 10px;
-    font-size: 15px; color: {TEXT2}; background: transparent; }}
-QWidget#sidebar QPushButton:hover {{ background: {RAISED}; }}
-QWidget#sidebar QPushButton:checked {{ background: {RAISED}; color: {TEXT}; font-weight: 700; }}
-QLabel#logo {{ font-size: 20px; font-weight: 800; color: {TEXT}; padding: 6px 16px 18px 16px; }}
-QFrame#card {{ background: {CARD}; border-radius: 18px; }}
-QLabel#h1 {{ font-size: 26px; font-weight: 800; }}
-QLabel#h2 {{ font-size: 19px; font-weight: 700; }}
-QLabel#h3 {{ font-size: 16px; font-weight: 700; }}
-QLabel#muted {{ color: {MUTED}; font-size: 13px; }}
+QWidget#topbar {{ background: {CARD}; border-bottom: 1px solid {LINE}; }}
+QWidget#topbar QPushButton {{ background: transparent; color: {TEXT2}; border: none; border-radius: 0;
+    border-bottom: 2px solid transparent; padding: 11px 16px 9px 16px; font-size: 14px; font-weight: 600; }}
+QWidget#topbar QPushButton:hover {{ color: {TEXT}; }}
+QWidget#topbar QPushButton:checked {{ color: {TEXT}; border-bottom: 2px solid {ACCENT}; }}
+QLabel#logo {{ font-family: {MONO}; font-size: 14px; font-weight: 600; color: {ACCENT}; padding: 0 18px 0 4px; }}
+QLabel#topinfo {{ font-family: {MONO}; color: {MUTED}; font-size: 12px; }}
+QLabel#dot {{ color: {OK}; font-size: 10px; }}
+QFrame#card {{ background: {CARD}; border: 1px solid {LINE}; border-radius: 4px; }}
+QFrame#card QLabel {{ background: transparent; }}
+QLabel#ph {{ color: {MUTED}; font-size: 11px; font-weight: 600; letter-spacing: 1px; }}
+QFrame#sep {{ background: {LINE}; border: none; max-width: 1px; min-width: 1px; }}
+QFrame#hsep {{ background: {LINE}; border: none; max-height: 1px; min-height: 1px; }}
+QLabel#h1 {{ font-size: 20px; font-weight: 700; }}
+QLabel#h2 {{ font-size: 16px; font-weight: 700; }}
+QLabel#h3 {{ font-size: 14px; font-weight: 700; }}
+QLabel#muted {{ color: {MUTED}; font-size: 12px; }}
 QLabel#body2 {{ color: {TEXT2}; }}
-QLabel#big {{ font-size: 26px; font-weight: 800; }}
-QLabel#chip {{ background: {RAISED}; color: {TEXT2}; border-radius: 8px; padding: 3px 8px; font-size: 12px; font-weight: 600; }}
-QPushButton {{ background: {RAISED}; color: {TEXT}; border: none; border-radius: 10px; padding: 10px 16px; font-weight: 600; }}
-QPushButton:hover {{ background: #34343F; }}
-QPushButton:disabled {{ color: {MUTED}; }}
-QPushButton#primary {{ background: {BLUE}; color: white; font-size: 15px; }}
-QPushButton#primary:hover {{ background: {BLUE_DARK}; }}
-QPushButton#primary:disabled {{ background: #22406B; color: {MUTED}; }}
-QPushButton#secondary {{ background: {BLUE_SOFT}; color: #7FB2FF; }}
-QPushButton#secondary:hover {{ background: #223A5E; }}
-QPushButton#link {{ background: transparent; color: {TEXT2}; padding: 6px 4px; font-weight: 500; }}
+QLabel#big {{ font-family: {MONO}; font-size: 22px; font-weight: 500; }}
+QLabel#num {{ font-family: {MONO}; font-size: 15px; }}
+QLabel#chip {{ background: transparent; color: {TEXT2}; border: 1px solid {LINE}; border-radius: 3px; padding: 1px 6px;
+    font-family: {MONO}; font-size: 11px; }}
+QPushButton {{ background: transparent; color: {TEXT}; border: 1px solid {LINE}; border-radius: 3px; padding: 7px 12px;
+    font-weight: 600; font-size: 12px; }}
+QPushButton:hover {{ background: {RAISED}; }}
+QPushButton:disabled {{ color: {MUTED}; border-color: {LINE}; }}
+QPushButton#primary {{ background: {ACCENT}; color: #111111; border: 1px solid {ACCENT}; }}
+QPushButton#primary:hover {{ background: {ACCENT_HOVER}; }}
+QPushButton#primary:disabled {{ background: {ACCENT_SOFT}; color: {MUTED}; border-color: {ACCENT_SOFT}; }}
+QPushButton#secondary {{ background: transparent; color: {TEXT}; border: 1px solid #2C3540; }}
+QPushButton#secondary:hover {{ background: {RAISED}; }}
+QPushButton#link {{ background: transparent; color: {TEXT2}; border: none; padding: 6px 4px; font-weight: 500; }}
 QPushButton#link:hover {{ color: {TEXT}; }}
-QPushButton#seg {{ background: transparent; color: {MUTED}; padding: 6px 12px; border-radius: 8px; }}
-QPushButton#seg:checked {{ background: {RAISED}; color: {TEXT}; }}
-QLineEdit, QComboBox, QSpinBox, QDateEdit {{ background: {RAISED}; color: {TEXT}; border: 1px solid transparent; border-radius: 10px; padding: 9px 12px; }}
-QLineEdit:focus {{ border: 1px solid {BLUE}; background: {CARD}; }}
-QComboBox::drop-down {{ border: none; width: 24px; }}
-QProgressBar {{ background: {LINE}; border: none; border-radius: 3px; max-height: 6px; text-align: center; }}
-QProgressBar::chunk {{ background: {BLUE}; border-radius: 3px; }}
-QTableWidget {{ background: {CARD}; border: none; border-radius: 12px; gridline-color: {LINE};
-    alternate-background-color: #212128; selection-background-color: {BLUE_SOFT}; selection-color: {TEXT}; }}
+QPushButton#seg {{ background: transparent; color: {MUTED}; border: none; border-bottom: 2px solid transparent;
+    border-radius: 0; padding: 6px 10px; }}
+QPushButton#seg:checked {{ color: {TEXT}; border-bottom: 2px solid {ACCENT}; }}
+QLineEdit, QComboBox, QSpinBox, QDateEdit {{ background: {RAISED}; color: {TEXT}; border: 1px solid {LINE}; border-radius: 3px;
+    padding: 6px 10px; }}
+QLineEdit:focus, QComboBox:focus {{ border: 1px solid {ACCENT}; }}
+QComboBox::drop-down {{ border: none; width: 22px; }}
+QProgressBar {{ background: {LINE}; border: none; border-radius: 0; max-height: 3px; text-align: center; }}
+QProgressBar::chunk {{ background: {ACCENT}; }}
+QTableWidget {{ background: {CARD}; border: 1px solid {LINE}; border-radius: 0; gridline-color: {LINE};
+    alternate-background-color: #0F1318; selection-background-color: {ACCENT_SOFT}; outline: 0; }}
+QTableWidget#plain {{ border: none; }}
+QTableWidget::item {{ padding: 4px 8px; border-bottom: 1px solid {LINE}; }}
 QHeaderView::section {{ background: {CARD}; color: {MUTED}; border: none; border-bottom: 1px solid {LINE};
-    padding: 8px 6px; font-weight: 600; font-size: 12px; }}
-QTabWidget::pane {{ border: none; background: {BG}; }}
-QTabBar::tab {{ background: transparent; color: {MUTED}; padding: 8px 14px; font-weight: 600; }}
-QTabBar::tab:selected {{ color: {TEXT}; border-bottom: 2px solid {TEXT}; }}
-QGroupBox {{ background: {CARD}; border: none; border-radius: 14px; margin-top: 18px; padding: 14px; font-weight: 700; }}
-QGroupBox::title {{ subcontrol-origin: margin; left: 6px; color: {TEXT2}; }}
-QPlainTextEdit {{ background: {CARD}; border: none; border-radius: 12px; }}
-QStatusBar {{ background: {CARD}; color: {TEXT2}; border-top: 1px solid {LINE}; }}
-QScrollBar:vertical {{ background: transparent; width: 10px; }}
-QScrollBar::handle:vertical {{ background: #3A3A44; border-radius: 5px; min-height: 30px; }}
-QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; }}
+    padding: 6px 8px; font-weight: 600; font-size: 11px; }}
+QTabWidget::pane {{ border: 1px solid {LINE}; background: {BG}; }}
+QTabBar::tab {{ background: transparent; color: {MUTED}; padding: 8px 14px; font-weight: 600; border-bottom: 2px solid transparent; }}
+QTabBar::tab:selected {{ color: {TEXT}; border-bottom: 2px solid {ACCENT}; }}
+QGroupBox {{ background: {CARD}; border: 1px solid {LINE}; border-radius: 4px; margin-top: 18px; padding: 12px; font-weight: 600; }}
+QGroupBox::title {{ subcontrol-origin: margin; left: 6px; color: {MUTED}; font-size: 11px; }}
+QPlainTextEdit {{ background: {CARD}; border: 1px solid {LINE}; border-radius: 0; font-family: {MONO}; font-size: 12px; color: {TEXT2}; }}
+QPlainTextEdit#log {{ border: none; }}
+QStatusBar {{ background: {CARD}; color: {TEXT2}; border-top: 1px solid {LINE}; font-family: {MONO}; font-size: 12px; }}
+QScrollBar:vertical {{ background: transparent; width: 8px; }}
+QScrollBar::handle:vertical {{ background: #2A323C; border-radius: 4px; min-height: 30px; }}
+QScrollBar:horizontal {{ background: transparent; height: 8px; }}
+QScrollBar::handle:horizontal {{ background: #2A323C; border-radius: 4px; min-width: 30px; }}
+QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; width: 0; }}
 QMessageBox {{ background: {CARD}; }}
-QComboBox QAbstractItemView {{ background: {CARD}; color: {TEXT}; selection-background-color: {BLUE_SOFT}; border: 1px solid {LINE}; }}
+QComboBox QAbstractItemView {{ background: {CARD}; color: {TEXT}; selection-background-color: {ACCENT_SOFT}; border: 1px solid {LINE}; }}
 QToolTip {{ background: {RAISED}; color: {TEXT}; border: 1px solid {LINE}; }}
 QTableWidget QTableCornerButton::section {{ background: {CARD}; border: none; }}
 """
+
+
+def mono_font(size: int = 12):
+    """Fixed-width font for numbers in tables (QSS cannot reach table items)."""
+    from PySide6.QtGui import QFont
+
+    f = QFont()
+    f.setFamilies(MONO_FAMILIES)
+    f.setPointSizeF(size * 0.75)
+    f.setStyleHint(QFont.Monospace)
+    return f
 
 
 def signed_color(x: float | None) -> str:
@@ -82,14 +115,14 @@ def signed_color(x: float | None) -> str:
 
 
 def apply(app) -> None:
-    """Dark palette regardless of the Windows theme, plus the stylesheet and dark chart colors."""
+    """Terminal palette regardless of the Windows theme, plus the stylesheet."""
     from PySide6.QtGui import QColor, QPalette
 
     app.setStyle("Fusion")
     pal = QPalette()
-    for role, color in ((QPalette.Window, BG), (QPalette.Base, CARD), (QPalette.AlternateBase, "#212128"),
+    for role, color in ((QPalette.Window, BG), (QPalette.Base, CARD), (QPalette.AlternateBase, "#0F1318"),
                         (QPalette.Text, TEXT), (QPalette.WindowText, TEXT), (QPalette.Button, RAISED),
-                        (QPalette.ButtonText, TEXT), (QPalette.Highlight, BLUE), (QPalette.HighlightedText, "#FFFFFF"),
+                        (QPalette.ButtonText, TEXT), (QPalette.Highlight, "#5A4520"), (QPalette.HighlightedText, TEXT),
                         (QPalette.ToolTipBase, RAISED), (QPalette.ToolTipText, TEXT), (QPalette.PlaceholderText, MUTED)):
         pal.setColor(role, QColor(color))
     app.setPalette(pal)
@@ -103,4 +136,3 @@ def apply(app) -> None:
     matplotlib.rcParams["font.family"] = ["Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans CJK KR", "Noto Sans CJK JP",
                                             "DejaVu Sans"]
     matplotlib.rcParams["axes.unicode_minus"] = False
-
