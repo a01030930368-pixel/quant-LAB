@@ -144,9 +144,26 @@ def test_auto_search_page_runs_and_lists_results(win, tmp_path):
     assert page.kpi_values[0].text().startswith("0 / ")
     page.workers.setValue(1)
     page.limit = 5
-    page.start()
+    # "끝나면 계속": a finished run starts the next one by itself; stop the chain after two runs
+    from quantlab.services.autosearch import AutoSearch
+
+    runs = []
+    real = AutoSearch.run
+
+    def counted(self, *a, **k):
+        runs.append(1)
+        if len(runs) == 2:
+            page.keep_going.setChecked(False)
+        return real(self, *a, **k)
+
+    AutoSearch.run = counted
+    try:
+        page.start()
+    finally:
+        AutoSearch.run = real
+    assert len(runs) == 2
     assert not page.running
-    assert page.summary["done"] >= 5 and page.summary["pending"] == 0
+    assert page.summary["done"] >= 10 and page.summary["pending"] == 0
     assert page.funnel.rowCount() == 10
     assert win.lab.registry.holdout_ledger() == []
     # AUTO specs never appear as strategy cards on the home page

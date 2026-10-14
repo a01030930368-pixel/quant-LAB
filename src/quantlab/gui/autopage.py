@@ -9,13 +9,23 @@ from __future__ import annotations
 
 import os
 
-from PySide6.QtCore import Qt, QThreadPool
-from PySide6.QtWidgets import (QAbstractItemView, QButtonGroup, QHBoxLayout, QHeaderView, QProgressBar, QPushButton,
+from PySide6.QtCore import Qt, QThreadPool, QTimer
+from PySide6.QtWidgets import (QAbstractItemView, QButtonGroup, QCheckBox, QHBoxLayout, QHeaderView, QProgressBar, QPushButton,
                                QSpinBox, QTableWidget, QVBoxLayout)
 
 from quantlab.gui import theme
 from quantlab.gui.home import Card, KeepColors, Page, button, cell, hline, kpi_strip, label, pane_header, pct
 from quantlab.services.autosearch import GROUPS
+
+def _keep_awake(on: bool) -> None:
+    """Windows: stop the PC from going to sleep while the search runs (the screen may still turn off)."""
+    if os.name != "nt":
+        return
+    import ctypes
+
+    es_continuous, es_system_required = 0x80000000, 0x00000001
+    ctypes.windll.kernel32.SetThreadExecutionState(es_continuous | (es_system_required if on else 0))
+
 
 GROUP_NAME = {"AUTO-DEVA": "선진국 A", "AUTO-DEVB": "선진국 B", "AUTO-EM": "신흥국", "AUTO-REAL": "채권·금·원자재·리츠"}
 GROUP_NOTE = {
@@ -38,6 +48,7 @@ class AutoPage(Page):
         self._keep = []
         self.summary: dict | None = None
         self.limit: int | None = None  # tests run a few combinations instead of a full run
+        self._exhausted: set[str] = set()  # groups whose whole grid has been tried
 
         head = QHBoxLayout()
         head.addWidget(label("자동 탐색", "h1"))
@@ -82,6 +93,10 @@ class AutoPage(Page):
         self.stop_btn = button("멈추기", "secondary", self.stop)
         self.stop_btn.setEnabled(False)
         row.addWidget(self.stop_btn)
+        self.keep_going = QCheckBox("끝나면 계속")
+        self.keep_going.setChecked(True)
+        self.keep_going.setToolTip("3,000개가 끝나면 다음 3,000개를 바로 시작하고, 묶음을 다 시험하면 다음 묶음으로 넘어갑니다.")
+        row.addWidget(self.keep_going)
         row.addSpacing(12)
         self.bar = QProgressBar()
         self.bar.setTextVisible(True)
@@ -199,6 +214,7 @@ class AutoPage(Page):
         from quantlab.gui.main_window import _Job, _Signals
 
         self.running, self._stop = True, False
+        _keep_awake(True)
         self._buttons()
         group, workers, root, limit = self.group, self.workers.value(), self.lab.ws.root, self.limit
         sig = _Signals()
@@ -227,6 +243,8 @@ class AutoPage(Page):
                                        else "이번 탐색을 마쳤습니다.")
             self.step.setText(note)
             self.win.status(f"자동 탐색 {group}: {note}")
+            if self.keep_going.isChecked() and not out.get("stopped"):
+                self._continue(group, exhausted=bool(out.get("note")))
 
         def fail(text):
             self._done(sig)
@@ -243,8 +261,25 @@ class AutoPage(Page):
         else:
             QThreadPool.globalInstance().start(j)
 
+    def _continue(self, group: str, exhausted: bool) -> None:
+        """Start the next run: the same group, or the next group once this one is fully tried."""
+        if exhausted:
+            self._exhausted.add(group)
+            rest = [g for g in GROUPS if g not in self._exhausted]
+            if not rest:
+                self.step.setText("네 묶음의 조합을 모두 시험했습니다.")
+                return
+            nxt = [g for g in GROUPS[GROUPS.index(self.group) + 1:] + GROUPS if g not in self._exhausted]
+            group = nxt[0]
+        self.choose(group)
+        if self.win.runner.sync:
+            self.start()
+        else:
+            QTimer.singleShot(2000, self.start)
+
     def _done(self, sig) -> None:
         self.running = False
+        _keep_awake(False)
         if sig in self._keep:
             self._keep.remove(sig)
         self.refresh()
