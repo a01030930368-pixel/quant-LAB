@@ -189,7 +189,32 @@ class Lab:
         out = validate(loaded.factory, conf["params"], data, conf["policy_hash"], self.registry,
                        dataset_version=dataset_version, qc_fatal=manifest.get("qc_fatal", []),
                        strategy_hash=strategy_hash, spec_version=loaded.spec["spec_version"], origin=loaded.origin)
+        if out.results:
+            self._save_artifacts(out.experiment_id, out.results["strategy"], out.results["benchmark"])
         return out
+
+    # --- results -------------------------------------------------------------------
+    def write_report(self, experiment_id: str) -> Path:
+        from quantlab.analysis.report import write_report
+
+        return write_report(self, experiment_id)
+
+    def export_packet(self, experiment_id: str) -> Path:
+        from quantlab.analysis.report import export_packet
+
+        return export_packet(self, experiment_id)
+
+    def compare(self, experiment_ids: list[str]) -> pd.DataFrame:
+        rows = []
+        for eid in experiment_ids:
+            e = self.registry.experiment(eid)
+            m = e["metrics"]
+            src = m.get("holdout") or m.get("dev") or m
+            s = src.get("strategy", {})
+            rows.append({"experiment": eid, "strategy": f"{e['strategy_id']}@{e['strategy_version']}", "kind": e["kind"],
+                         "cagr": s.get("cagr"), "sharpe": s.get("sharpe"), "max_drawdown": s.get("max_drawdown"),
+                         "sharpe_diff": src.get("sharpe_diff"), "n_trades": s.get("n_trades")})
+        return pd.DataFrame(rows)
 
     # --- reproduction --------------------------------------------------------------
     def reproduce(self, experiment_id: str) -> dict:

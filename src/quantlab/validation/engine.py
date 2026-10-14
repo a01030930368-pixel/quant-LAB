@@ -44,6 +44,7 @@ class ValidationOutcome:
     overall: str
     gates: list[GateResult]
     metrics: dict[str, Any]
+    results: dict[str, Any] = field(default_factory=dict)  # BacktestResults for charts/artifacts
 
 
 class BuyAndHold(Strategy):
@@ -304,4 +305,9 @@ def validate(make: StrategyFactory, params: dict, data: MarketData, policy_hash:
     registry.record_verdict(exp_id, "OVERALL", overall, [f"{g.gate}={g.verdict}" for g in gates])
     if overall in STATE_FOR:
         registry.record_state_change(family, STATE_FOR[overall], f"formal validation {overall}", exp_id)
-    return ValidationOutcome(exp_id, overall, gates, metrics)
+    results = {}
+    if "full_s" in locals():
+        results = {"strategy": full_s, "benchmark": full_b}
+    elif "dev_s" in locals():
+        results = {"strategy": dev_s, "benchmark": dev_b}
+    return ValidationOutcome(exp_id, overall, gates, metrics, results)

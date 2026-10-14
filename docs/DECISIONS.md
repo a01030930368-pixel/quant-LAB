@@ -98,3 +98,13 @@ profits that vanish at 2x cost. Policy trend_timing_v1 now uses 25bp commission 
 a 2x cost stress in Gate 4 (was 5bp total and a 25bp slippage stress). Changed before any data
 download or registration; stricter only. The user excludes index-tracking/momentum strategies,
 so TT-SPY-SMA stays solely to verify the app end to end and is labelled so in its spec.
+
+## D-013 · 2026-10-14 · Results: charts, report, packet
+Charts are built with `matplotlib.figure.Figure` only (no pyplot) so the same functions serve
+headless reports and the Qt canvas. `Lab.write_report` writes report.md/.html with fixed Korean
+sections, including the standing limits (no tax, FX or regulatory fees; synthetic or seen data is
+not evidence). `Lab.export_packet` builds a ZIP for outside review (Claude or a person) with
+metrics, verdicts, policy, spec, trial summary, daily equity, trades and charts — never raw price
+files — and refuses to write it if the stored API key string appears in any member. Every export
+is recorded with whether it includes holdout results, because a viewed holdout result makes later
+derived strategies non-independent (lineage check).
