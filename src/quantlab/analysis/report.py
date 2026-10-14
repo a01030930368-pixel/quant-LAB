@@ -17,6 +17,7 @@ import yaml
 
 from quantlab.analysis import charts
 from quantlab.core import app_info
+from quantlab.core.hashing import canonical_json
 
 SECTIONS = ["1. 전략 ID와 버전", "2. 연구 가설과 경제적 논리", "3. 거래 규칙과 파라미터", "4. 데이터 출처와 품질",
             "5. 백테스트 및 검증 구간", "6. 수수료·슬리피지·체결 가정", "7. 기간별 수익률과 주요 위험지표",
@@ -189,7 +190,7 @@ def export_packet(lab, experiment_id: str) -> Path:
             z.writestr(name, data)
             contents.append(name)
         add("report.md", report_path.read_text(encoding="utf-8"))
-        add("metrics.json", json.dumps(e["metrics"], indent=1, ensure_ascii=False))
+        add("metrics.json", json.dumps(json.loads(canonical_json(e["metrics"])), indent=1, ensure_ascii=False))  # NaN as "NaN": valid JSON
         add("experiment.json", json.dumps({k: v for k, v in e.items() if k != "metrics"}, indent=1, ensure_ascii=False, default=str))
         add("verdicts.json", json.dumps(reg.verdicts(experiment_id), indent=1, ensure_ascii=False))
         if e.get("validation_policy_version"):

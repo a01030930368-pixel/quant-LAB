@@ -68,3 +68,21 @@ def test_compare_table(done):
     lab, _ = done
     df = lab.compare([lab.bt.experiment_id, lab.final.experiment_id])
     assert list(df["kind"]) == ["exploratory", "formal"]
+
+
+def test_report_and_packet_with_nan_metrics(done, monkeypatch):
+    """A losing strategy has NaN metrics (e.g. top-5% share); they are stored as "NaN" and must still
+    render in the report and come out as valid JSON in the packet (bug seen on the user's PC)."""
+    import math
+
+    import quantlab.validation.metrics as vm
+
+    lab, _ = done
+    monkeypatch.setattr(vm, "top_period_share", lambda r, frac=0.05: float("nan"))
+    bt = lab.backtest(lab.imp.strategy_hash, lab.version)
+    m = lab.registry.experiment(bt.experiment_id)["metrics"]
+    assert math.isnan((m.get("dev") or m)["strategy"]["top5pct_sessions_share"])
+    text = lab.write_report(bt.experiment_id).read_text(encoding="utf-8")
+    assert "상위 5% 거래일 수익 기여 | —" in text
+    with zipfile.ZipFile(lab.export_packet(bt.experiment_id)) as z:
+        json.loads(z.read("metrics.json"), parse_constant=lambda c: pytest.fail(f"non-standard JSON {c}"))
