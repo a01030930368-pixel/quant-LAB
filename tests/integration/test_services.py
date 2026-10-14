@@ -48,3 +48,18 @@ def test_example_specs_copied_to_work_folder(tmp_path):
         assert (tmp_path / "QL" / "examples" / "TT-SPY-SMA.qls.yaml").is_file()
     finally:
         lab.close()
+
+
+def test_builtin_specs_import_and_resolve_their_policies(tmp_path):
+    from quantlab.services.lab import Lab, builtin_path
+
+    lab = Lab(tmp_path / "QL")
+    try:
+        for spec in sorted(builtin_path("specs").glob("*.qls.yaml")):
+            res = lab.import_strategy(spec)
+            assert res.state == "RESEARCH", (spec.name, res.problems)
+            _, policy = lab.policy_for(res.loaded)
+            assert policy["strategy_family"] == res.strategy_id
+            assert set(res.loaded.spec["universe"]["symbols"]) == set(policy["universe"])
+    finally:
+        lab.close()

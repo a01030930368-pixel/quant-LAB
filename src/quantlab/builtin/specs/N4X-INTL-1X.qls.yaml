@@ -1,0 +1,366 @@
+# Next research after M15 (plan v0.3): do the prior project's N4 oversold-rebound rules carry an
+# edge WITHOUT leverage on markets the prior project never tested?
+# The five legs are copied as recorded in the handoff (§3-4: b32 S2, b31 D3, b36 B4, b47 Y2, b55 F3)
+# and frozen; nothing here was tuned. Differences from the original, all fixed in advance:
+#   * signals are read on each country ETF itself and that ETF is bought (no 3x ETF);
+#   * decide at the close, fill at the next open (original: 15:55 decide, 15:59 fill);
+#   * one-way cost 25bp + 5bp slippage (user's standing rule).
+# Caveat: the prior project saw EFA and EEM (b35), which overlap these countries, so the
+# evidence is only partly independent; the forward period after 2026-10-15 is fully clean.
+spec_version: 1
+strategy:
+  id: N4X-INTL-1X
+  version: 1.0.0
+  name: 해외 선진국 지수 ETF 과매도 반등 묶음 (N4 규칙 고정, 레버리지 없음)
+  type: mean_reversion
+  author: claude
+  parent: null
+  derived_after_holdout_view: false
+hypothesis:
+  class: data_mining
+  economic_rationale: >
+    Short-term overreaction in broad equity indices after sharp declines (Connors & Alvarez 2009):
+    liquidity providers are paid to absorb forced and stop-loss selling, so prices partly revert
+    within days. If this is a property of index markets rather than of US data mined by the prior
+    project (100+ rules tried), it should also appear in other developed markets.
+  expected_risks:
+    - costs (0.6% round trip) larger than the unlevered per-trade edge
+    - persistent declines (2008, 2011, 2022) where every leg buys too early
+    - all five legs express one idea, so they lose together
+    - prior selection on US data; EFA/EEM were partly seen
+  falsification: >
+    On the holdout (2017-01 onward), net Sharpe not above EFA buy-and-hold with block-bootstrap
+    p < 0.10, or max drawdown above 80% of EFA's. Trade-level: gross mean per trade not above zero.
+universe:
+  market: US_ETF
+  symbols: [EWJ, EWG, EWU, EWC, EWA, EWQ, EWL, EWH, EWS, EFA, BIL]
+  frequency: daily
+rules:
+  kind: declarative
+  entry_exit:
+    sizing: equal_active
+    legs:
+      - name: S2-EWJ
+        trade: EWJ
+        entry:
+          - {indicator: close_vs_min, days: 5, op: "<=", value: 0}
+          - {indicator: close_vs_sma, days: 200, op: ">", value: 0}
+        exit:
+          any: [{indicator: close_vs_max, days: 5, op: ">=", value: 0}]
+          max_hold_days: 15
+      - name: D3-EWJ
+        trade: EWJ
+        entry: [{indicator: down_streak, op: ">=", value: 3}]
+        exit:
+          any: [{indicator: return, days: 1, op: ">", value: 0}]
+          max_hold_days: 10
+      - name: B4-EWJ
+        trade: EWJ
+        entry:
+          - {indicator: bollinger_z, days: 20, op: "<", value: -2}
+          - {indicator: close_vs_sma, days: 200, op: ">", value: 0}
+        exit:
+          any: [{indicator: close_vs_sma, days: 5, op: ">", value: 0}]
+          max_hold_days: 10
+      - name: Y2-EWJ
+        trade: EWJ
+        entry:
+          - {indicator: session, value: first_of_week}
+          - {indicator: return, days: 1, op: "<", value: -0.01}
+        exit: {max_hold_days: 1}
+      - name: F3-EWJ
+        trade: EWJ
+        entry:
+          - {indicator: session, value: last_of_week}
+          - {indicator: close_vs_min, days: 20, op: "<=", value: 0}
+          - {indicator: close_vs_sma, days: 200, op: ">", value: 0}
+        exit: {max_hold_days: 5}
+      - name: S2-EWG
+        trade: EWG
+        entry:
+          - {indicator: close_vs_min, days: 5, op: "<=", value: 0}
+          - {indicator: close_vs_sma, days: 200, op: ">", value: 0}
+        exit:
+          any: [{indicator: close_vs_max, days: 5, op: ">=", value: 0}]
+          max_hold_days: 15
+      - name: D3-EWG
+        trade: EWG
+        entry: [{indicator: down_streak, op: ">=", value: 3}]
+        exit:
+          any: [{indicator: return, days: 1, op: ">", value: 0}]
+          max_hold_days: 10
+      - name: B4-EWG
+        trade: EWG
+        entry:
+          - {indicator: bollinger_z, days: 20, op: "<", value: -2}
+          - {indicator: close_vs_sma, days: 200, op: ">", value: 0}
+        exit:
+          any: [{indicator: close_vs_sma, days: 5, op: ">", value: 0}]
+          max_hold_days: 10
+      - name: Y2-EWG
+        trade: EWG
+        entry:
+          - {indicator: session, value: first_of_week}
+          - {indicator: return, days: 1, op: "<", value: -0.01}
+        exit: {max_hold_days: 1}
+      - name: F3-EWG
+        trade: EWG
+        entry:
+          - {indicator: session, value: last_of_week}
+          - {indicator: close_vs_min, days: 20, op: "<=", value: 0}
+          - {indicator: close_vs_sma, days: 200, op: ">", value: 0}
+        exit: {max_hold_days: 5}
+      - name: S2-EWU
+        trade: EWU
+        entry:
+          - {indicator: close_vs_min, days: 5, op: "<=", value: 0}
+          - {indicator: close_vs_sma, days: 200, op: ">", value: 0}
+        exit:
+          any: [{indicator: close_vs_max, days: 5, op: ">=", value: 0}]
+          max_hold_days: 15
+      - name: D3-EWU
+        trade: EWU
+        entry: [{indicator: down_streak, op: ">=", value: 3}]
+        exit:
+          any: [{indicator: return, days: 1, op: ">", value: 0}]
+          max_hold_days: 10
+      - name: B4-EWU
+        trade: EWU
+        entry:
+          - {indicator: bollinger_z, days: 20, op: "<", value: -2}
+          - {indicator: close_vs_sma, days: 200, op: ">", value: 0}
+        exit:
+          any: [{indicator: close_vs_sma, days: 5, op: ">", value: 0}]
+          max_hold_days: 10
+      - name: Y2-EWU
+        trade: EWU
+        entry:
+          - {indicator: session, value: first_of_week}
+          - {indicator: return, days: 1, op: "<", value: -0.01}
+        exit: {max_hold_days: 1}
+      - name: F3-EWU
+        trade: EWU
+        entry:
+          - {indicator: session, value: last_of_week}
+          - {indicator: close_vs_min, days: 20, op: "<=", value: 0}
+          - {indicator: close_vs_sma, days: 200, op: ">", value: 0}
+        exit: {max_hold_days: 5}
+      - name: S2-EWC
+        trade: EWC
+        entry:
+          - {indicator: close_vs_min, days: 5, op: "<=", value: 0}
+          - {indicator: close_vs_sma, days: 200, op: ">", value: 0}
+        exit:
+          any: [{indicator: close_vs_max, days: 5, op: ">=", value: 0}]
+          max_hold_days: 15
+      - name: D3-EWC
+        trade: EWC
+        entry: [{indicator: down_streak, op: ">=", value: 3}]
+        exit:
+          any: [{indicator: return, days: 1, op: ">", value: 0}]
+          max_hold_days: 10
+      - name: B4-EWC
+        trade: EWC
+        entry:
+          - {indicator: bollinger_z, days: 20, op: "<", value: -2}
+          - {indicator: close_vs_sma, days: 200, op: ">", value: 0}
+        exit:
+          any: [{indicator: close_vs_sma, days: 5, op: ">", value: 0}]
+          max_hold_days: 10
+      - name: Y2-EWC
+        trade: EWC
+        entry:
+          - {indicator: session, value: first_of_week}
+          - {indicator: return, days: 1, op: "<", value: -0.01}
+        exit: {max_hold_days: 1}
+      - name: F3-EWC
+        trade: EWC
+        entry:
+          - {indicator: session, value: last_of_week}
+          - {indicator: close_vs_min, days: 20, op: "<=", value: 0}
+          - {indicator: close_vs_sma, days: 200, op: ">", value: 0}
+        exit: {max_hold_days: 5}
+      - name: S2-EWA
+        trade: EWA
+        entry:
+          - {indicator: close_vs_min, days: 5, op: "<=", value: 0}
+          - {indicator: close_vs_sma, days: 200, op: ">", value: 0}
+        exit:
+          any: [{indicator: close_vs_max, days: 5, op: ">=", value: 0}]
+          max_hold_days: 15
+      - name: D3-EWA
+        trade: EWA
+        entry: [{indicator: down_streak, op: ">=", value: 3}]
+        exit:
+          any: [{indicator: return, days: 1, op: ">", value: 0}]
+          max_hold_days: 10
+      - name: B4-EWA
+        trade: EWA
+        entry:
+          - {indicator: bollinger_z, days: 20, op: "<", value: -2}
+          - {indicator: close_vs_sma, days: 200, op: ">", value: 0}
+        exit:
+          any: [{indicator: close_vs_sma, days: 5, op: ">", value: 0}]
+          max_hold_days: 10
+      - name: Y2-EWA
+        trade: EWA
+        entry:
+          - {indicator: session, value: first_of_week}
+          - {indicator: return, days: 1, op: "<", value: -0.01}
+        exit: {max_hold_days: 1}
+      - name: F3-EWA
+        trade: EWA
+        entry:
+          - {indicator: session, value: last_of_week}
+          - {indicator: close_vs_min, days: 20, op: "<=", value: 0}
+          - {indicator: close_vs_sma, days: 200, op: ">", value: 0}
+        exit: {max_hold_days: 5}
+      - name: S2-EWQ
+        trade: EWQ
+        entry:
+          - {indicator: close_vs_min, days: 5, op: "<=", value: 0}
+          - {indicator: close_vs_sma, days: 200, op: ">", value: 0}
+        exit:
+          any: [{indicator: close_vs_max, days: 5, op: ">=", value: 0}]
+          max_hold_days: 15
+      - name: D3-EWQ
+        trade: EWQ
+        entry: [{indicator: down_streak, op: ">=", value: 3}]
+        exit:
+          any: [{indicator: return, days: 1, op: ">", value: 0}]
+          max_hold_days: 10
+      - name: B4-EWQ
+        trade: EWQ
+        entry:
+          - {indicator: bollinger_z, days: 20, op: "<", value: -2}
+          - {indicator: close_vs_sma, days: 200, op: ">", value: 0}
+        exit:
+          any: [{indicator: close_vs_sma, days: 5, op: ">", value: 0}]
+          max_hold_days: 10
+      - name: Y2-EWQ
+        trade: EWQ
+        entry:
+          - {indicator: session, value: first_of_week}
+          - {indicator: return, days: 1, op: "<", value: -0.01}
+        exit: {max_hold_days: 1}
+      - name: F3-EWQ
+        trade: EWQ
+        entry:
+          - {indicator: session, value: last_of_week}
+          - {indicator: close_vs_min, days: 20, op: "<=", value: 0}
+          - {indicator: close_vs_sma, days: 200, op: ">", value: 0}
+        exit: {max_hold_days: 5}
+      - name: S2-EWL
+        trade: EWL
+        entry:
+          - {indicator: close_vs_min, days: 5, op: "<=", value: 0}
+          - {indicator: close_vs_sma, days: 200, op: ">", value: 0}
+        exit:
+          any: [{indicator: close_vs_max, days: 5, op: ">=", value: 0}]
+          max_hold_days: 15
+      - name: D3-EWL
+        trade: EWL
+        entry: [{indicator: down_streak, op: ">=", value: 3}]
+        exit:
+          any: [{indicator: return, days: 1, op: ">", value: 0}]
+          max_hold_days: 10
+      - name: B4-EWL
+        trade: EWL
+        entry:
+          - {indicator: bollinger_z, days: 20, op: "<", value: -2}
+          - {indicator: close_vs_sma, days: 200, op: ">", value: 0}
+        exit:
+          any: [{indicator: close_vs_sma, days: 5, op: ">", value: 0}]
+          max_hold_days: 10
+      - name: Y2-EWL
+        trade: EWL
+        entry:
+          - {indicator: session, value: first_of_week}
+          - {indicator: return, days: 1, op: "<", value: -0.01}
+        exit: {max_hold_days: 1}
+      - name: F3-EWL
+        trade: EWL
+        entry:
+          - {indicator: session, value: last_of_week}
+          - {indicator: close_vs_min, days: 20, op: "<=", value: 0}
+          - {indicator: close_vs_sma, days: 200, op: ">", value: 0}
+        exit: {max_hold_days: 5}
+      - name: S2-EWH
+        trade: EWH
+        entry:
+          - {indicator: close_vs_min, days: 5, op: "<=", value: 0}
+          - {indicator: close_vs_sma, days: 200, op: ">", value: 0}
+        exit:
+          any: [{indicator: close_vs_max, days: 5, op: ">=", value: 0}]
+          max_hold_days: 15
+      - name: D3-EWH
+        trade: EWH
+        entry: [{indicator: down_streak, op: ">=", value: 3}]
+        exit:
+          any: [{indicator: return, days: 1, op: ">", value: 0}]
+          max_hold_days: 10
+      - name: B4-EWH
+        trade: EWH
+        entry:
+          - {indicator: bollinger_z, days: 20, op: "<", value: -2}
+          - {indicator: close_vs_sma, days: 200, op: ">", value: 0}
+        exit:
+          any: [{indicator: close_vs_sma, days: 5, op: ">", value: 0}]
+          max_hold_days: 10
+      - name: Y2-EWH
+        trade: EWH
+        entry:
+          - {indicator: session, value: first_of_week}
+          - {indicator: return, days: 1, op: "<", value: -0.01}
+        exit: {max_hold_days: 1}
+      - name: F3-EWH
+        trade: EWH
+        entry:
+          - {indicator: session, value: last_of_week}
+          - {indicator: close_vs_min, days: 20, op: "<=", value: 0}
+          - {indicator: close_vs_sma, days: 200, op: ">", value: 0}
+        exit: {max_hold_days: 5}
+      - name: S2-EWS
+        trade: EWS
+        entry:
+          - {indicator: close_vs_min, days: 5, op: "<=", value: 0}
+          - {indicator: close_vs_sma, days: 200, op: ">", value: 0}
+        exit:
+          any: [{indicator: close_vs_max, days: 5, op: ">=", value: 0}]
+          max_hold_days: 15
+      - name: D3-EWS
+        trade: EWS
+        entry: [{indicator: down_streak, op: ">=", value: 3}]
+        exit:
+          any: [{indicator: return, days: 1, op: ">", value: 0}]
+          max_hold_days: 10
+      - name: B4-EWS
+        trade: EWS
+        entry:
+          - {indicator: bollinger_z, days: 20, op: "<", value: -2}
+          - {indicator: close_vs_sma, days: 200, op: ">", value: 0}
+        exit:
+          any: [{indicator: close_vs_sma, days: 5, op: ">", value: 0}]
+          max_hold_days: 10
+      - name: Y2-EWS
+        trade: EWS
+        entry:
+          - {indicator: session, value: first_of_week}
+          - {indicator: return, days: 1, op: "<", value: -0.01}
+        exit: {max_hold_days: 1}
+      - name: F3-EWS
+        trade: EWS
+        entry:
+          - {indicator: session, value: last_of_week}
+          - {indicator: close_vs_min, days: 20, op: "<=", value: 0}
+          - {indicator: close_vs_sma, days: 200, op: ">", value: 0}
+        exit: {max_hold_days: 5}
+execution:
+  signal_time: close
+  fill: next_open
+  rebalance: daily
+parameters: {}
+benchmark: EFA_buy_and_hold
+costs: {one_way_bps: 30}   # informational; the validation policy's costs are binding
+validation:
+  policy: oversold_intl_v1

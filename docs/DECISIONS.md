@@ -139,3 +139,14 @@ log to QUANTLAB_SELFTEST_LOG (a windowed exe has no console). GitHub Actions
 (`windows-app.yml`, public repo so minutes are free) runs the tests, builds, removes Python from
 PATH, runs the self-test and uploads the zipped app as an artifact for 30 days. The bundle is
 large (~0.5 GB unpacked, mostly pyarrow and Qt); trimming is deferred until it matters.
+
+## D-017 · 2026-10-14 · Second study: N4 rules, frozen, unlevered, on unseen markets
+The baseline TT-SPY-SMA failed its one holdout read on the user's PC (Gate 3: holdout Sharpe
+difference -0.273, p 0.87); that family's holdout is spent. Per plan v0.3 the next study tests
+whether the prior project's only surviving idea (N4, five oversold-rebound legs found by mining
+US data) has an edge without leverage on developed-market country ETFs the prior project never
+tested (EWJ EWG EWU EWC EWA EWQ EWL EWH EWS), benchmark EFA, risk-free BIL. Rules are copied as
+recorded and frozen (no search space); signals on each ETF itself; decide at close, fill next
+open. Policy oversold_intl_v1 keeps every threshold and cost of trend_timing_v1; splits TRAIN
+2007-06..2012, VALIDATION 2013..2016, HOLDOUT 2017-01 onward, fixed before any data for these
+symbols was downloaded. Evidence is only partly independent (EFA/EEM were seen in b35).
