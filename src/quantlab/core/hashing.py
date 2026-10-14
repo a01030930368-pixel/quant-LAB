@@ -30,8 +30,8 @@ def _normalize(obj: Any) -> Any:
             return "NaN"
         if math.isinf(f):
             return "Inf" if f > 0 else "-Inf"
-        # repr round-trips exactly; avoids platform-dependent formatting
-        return repr(f)
+        # json emits repr(float): shortest exact round-trip, platform independent
+        return f
     if isinstance(obj, (pd.Timestamp,)):
         return obj.isoformat()
     return obj
