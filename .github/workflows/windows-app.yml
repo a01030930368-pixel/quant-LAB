@@ -3,6 +3,9 @@ name: windows-app
 # Builds the Windows desktop app on a clean runner and proves it works without a Python
 # installation on PATH: the packaged QuantLab.exe must pass --selftest (synthetic data,
 # full flow, no network). Plan M14.
+#
+# A push to main (a merged PR) also publishes the zip as the latest GitHub release;
+# update.bat in the installed app folder downloads that release.
 
 on:
   push:
@@ -10,7 +13,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write   # publish the release on main
 
 jobs:
   test-and-build:
@@ -80,3 +83,11 @@ jobs:
           name: QuantLab-windows
           path: QuantLab-windows.zip
           retention-days: 30
+      - name: Publish release (main only; update.bat downloads the latest one)
+        if: github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $msg = git log -1 --pretty=%B
+          gh release create $env:TAG QuantLab-windows.zip --target ${{ github.sha }} --latest --title "QUANT LAB $env:TAG" --notes "$msg"
