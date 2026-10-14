@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QDateEdit, QFileDia
                                QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget)
 
 from quantlab.analysis import charts
-from quantlab.services.lab import Lab
+from quantlab.services.lab import Lab, builtin_path
 
 PCT = {"cagr", "total_return", "ann_vol", "max_drawdown", "excess_cagr", "trade.mean_gross", "trade.median_gross",
        "trade.mean_gross_ex_top10"}
@@ -252,6 +252,11 @@ class DataScreen(Screen):
             rows.append({"symbol": s, "provider": m["source"].get("provider"), "first": m["first"], "last": m["last"],
                          "rows": m["rows"], "fatal": sum(c["status"] == "fatal" for c in checks),
                          "warn": sum(c["status"] == "warn" for c in checks), "sha": m["raw_sha256"][:12]})
+        # default: every symbol received, until the user types their own list
+        auto = " ".join(r["symbol"] for r in rows)
+        if self.ds_symbols.text().strip() in ("", getattr(self, "_auto", "")):
+            self.ds_symbols.setText(auto)
+        self._auto = auto
         _fill(self.raw, rows, [("symbol", "종목"), ("provider", "출처"), ("first", "시작"), ("last", "끝"),
                                ("rows", "행"), ("fatal", "치명"), ("warn", "경고"), ("sha", "원본 해시")])
         ds = [{"version": d["dataset_version"][:16], "symbols": " ".join(d["symbols"]), "fatal": len(d["qc_fatal"]),
@@ -266,6 +271,8 @@ class StrategyScreen(Screen):
         lay = QVBoxLayout(self)
         top = QHBoxLayout()
         top.addWidget(self.button("명세서 가져오기 (.qls.yaml)…", self.import_spec))
+        top.addWidget(self.button("기준 전략 가져오기 (앱 동작 확인용)",
+                                  lambda: self.import_spec(str(builtin_path("specs", "TT-SPY-SMA.qls.yaml")))))
         top.addStretch()
         lay.addLayout(top)
         lay.addWidget(_note("가져올 때 형식 검사, 합성 데이터 시험, 미래 데이터 누출 검사를 거칩니다. "

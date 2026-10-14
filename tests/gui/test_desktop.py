@@ -79,3 +79,12 @@ def test_app_selftest_flag():
     from quantlab.gui.app import main
 
     assert main(["QuantLab", "--selftest"]) == 0
+
+
+def test_dataset_symbols_prefilled_and_builtin_button(win, tmp_path):
+    for sym, p in write_synthetic_csvs(tmp_path).items():
+        win.data.csv_symbol.setText(sym)
+        win.data.pick_csv(str(p))
+    assert set(win.data.ds_symbols.text().split()) == {"SPY", "BIL"}
+    [b for b in win.strategies.actions if "기준 전략" in b.text()][0].click()
+    assert win.strategies.rows[0]["strategy_id"] == "TT-SPY-SMA"
