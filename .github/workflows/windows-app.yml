@@ -51,20 +51,30 @@ jobs:
       - name: Test the updater on an older install (Windows PowerShell 5.1)
         shell: pwsh
         run: |
-          $inst = "$env:RUNNER_TEMP\installed\QuantLab"
-          New-Item -ItemType Directory -Path "$env:RUNNER_TEMP\installed" | Out-Null
-          Copy-Item dist\QuantLab $inst -Recurse
-          "build-0" | Set-Content "$inst\build-info.txt"
-          "keep me" | Set-Content "$inst\user-note.txt"
-          Remove-Item "$inst\_internal\quantlab" -Recurse -Force   # the old install is visibly not the new build
-          $p = Start-Process powershell.exe -ArgumentList "-NoProfile","-ExecutionPolicy","Bypass","-File","$inst\update.ps1","-ZipPath","$PWD\QuantLab-windows.zip","-NoPause","-NoLaunch" -Wait -PassThru -NoNewWindow
-          if ($p.ExitCode -ne 0) { throw "updater exit code $($p.ExitCode)" }
-          if ((Get-Content "$inst\build-info.txt" | Select-Object -First 1).Trim() -ne $env:TAG) { throw "build-info not updated" }
-          if (-not (Test-Path "$inst\user-note.txt")) { throw "updater removed a user file" }
-          $env:QUANTLAB_SELFTEST_LOG = "$env:RUNNER_TEMP\selftest-updated.log"
-          $q = Start-Process -FilePath "$inst\QuantLab.exe" -ArgumentList "--selftest" -Wait -PassThru
-          Get-Content $env:QUANTLAB_SELFTEST_LOG
-          if ($q.ExitCode -ne 0) { throw "updated app selftest failed with exit code $($q.ExitCode)" }
+          # every check reports through one annotation, readable without the raw log
+          $log = [System.Collections.Generic.List[string]]::new()
+          function Fail($why) { $log.Add("FAIL: $why"); Write-Host "::error title=updater test::$($log -join '%0A')"; exit 1 }
+          try {
+            $inst = "$env:RUNNER_TEMP\installed\QuantLab"
+            New-Item -ItemType Directory -Path "$env:RUNNER_TEMP\installed" -Force | Out-Null
+            Copy-Item dist\QuantLab $inst -Recurse
+            "build-0" | Set-Content "$inst\build-info.txt"
+            "keep me" | Set-Content "$inst\user-note.txt"
+            "stale" | Set-Content "$inst\_internal\stale-file.txt"   # must be gone after the swap
+            $out = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$inst\update.ps1" -ZipPath "$PWD\QuantLab-windows.zip" -NoPause -NoLaunch 2>&1
+            $code = $LASTEXITCODE
+            $out | ForEach-Object { $log.Add("$_") }
+            if ($code -ne 0) { Fail "updater exit code $code" }
+            $now = (Get-Content "$inst\build-info.txt" | Select-Object -First 1).Trim()
+            if ($now -ne $env:TAG) { Fail "build-info is '$now', expected $env:TAG" }
+            if (-not (Test-Path "$inst\user-note.txt")) { Fail "updater removed a user file" }
+            if (Test-Path "$inst\_internal\stale-file.txt") { Fail "old _internal was not replaced" }
+            $env:QUANTLAB_SELFTEST_LOG = "$env:RUNNER_TEMP\selftest-updated.log"
+            $q = Start-Process -FilePath "$inst\QuantLab.exe" -ArgumentList "--selftest" -Wait -PassThru
+            if ($q.ExitCode -ne 0) { Get-Content $env:QUANTLAB_SELFTEST_LOG | ForEach-Object { $log.Add($_) }; Fail "updated app selftest exit $($q.ExitCode)" }
+            $log.Add("updated app selftest OK")
+            Write-Host "::notice title=updater test::$($log -join '%0A')"
+          } catch { Fail $_.Exception.Message }
       - uses: actions/upload-artifact@v4
         with:
           name: QuantLab-windows
