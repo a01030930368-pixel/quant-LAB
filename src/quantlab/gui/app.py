@@ -54,6 +54,19 @@ def choose_workspace(settings, parent=None) -> Path | None:
     return Path(path)
 
 
+def _show_uncaught_errors() -> None:
+    """A windowed app has no console, so an error inside a button handler would vanish silently."""
+    import traceback
+
+    from PySide6.QtWidgets import QMessageBox
+
+    def hook(exc_type, exc, tb):
+        text = "".join(traceback.format_exception(exc_type, exc, tb, limit=6))
+        QMessageBox.warning(None, "QUANT LAB 오류", f"{exc_type.__name__}: {exc}\n\n{text}")
+
+    sys.excepthook = hook
+
+
 def main(argv: list[str] | None = None) -> int:
     multiprocessing.freeze_support()  # parameter search uses spawned worker processes
     argv = list(sys.argv if argv is None else argv)
@@ -67,6 +80,7 @@ def main(argv: list[str] | None = None) -> int:
 
     app = QApplication(argv)
     app.setApplicationName("QUANT LAB")
+    _show_uncaught_errors()
     settings = QSettings("QuantLab", "QuantLab")
     ws = choose_workspace(settings)
     if ws is None:

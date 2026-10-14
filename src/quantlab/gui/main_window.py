@@ -623,17 +623,32 @@ class ResultsScreen(Screen):
 
     def report(self):
         eid = self.exp.currentData()
-        if eid:
-            self.last_path = self.lab.write_report(eid)
-            self.win.status(f"보고서: {self.last_path}")
+        if not eid:
+            self.win.notify("먼저 위 목록에서 실험을 고르세요.")
+            return
+
+        def done(path):
+            self.last_path = path
+            self.win.status(f"보고서: {path}")
             if not self.win.runner.sync:
-                QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.last_path.with_suffix(".html"))))
+                QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.with_suffix(".html"))))
+
+        self.win.runner.start("보고서 만들기", lambda p: self.lab.write_report(eid), done)
 
     def packet(self):
         eid = self.exp.currentData()
-        if eid:
-            self.last_path = self.lab.export_packet(eid)
-            self.win.status(f"결과 패킷: {self.last_path} (API 키·원본 가격 자료 제외)")
+        if not eid:
+            self.win.notify("먼저 위 목록에서 실험을 고르세요.")
+            return
+
+        def done(path):
+            self.last_path = path
+            self.win.notify(f"결과 패킷을 만들었습니다 (API 키·원본 가격 자료 제외).\n\n{path}\n\n"
+                            "이 zip을 Claude 프로젝트에 올리면 함께 검토할 수 있습니다.")
+            if not self.win.runner.sync:
+                QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.parent)))  # show it in Explorer
+
+        self.win.runner.start("결과 패킷 내보내기", lambda p: self.lab.export_packet(eid), done)
 
     def compare(self, ids: list[str] | None = None):
         if ids is None:
