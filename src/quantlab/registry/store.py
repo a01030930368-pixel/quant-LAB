@@ -128,8 +128,11 @@ class Registry:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         # the desktop app runs one background job at a time on a worker thread
-        self.conn = sqlite3.connect(self.path, check_same_thread=False)
+        # the automatic search writes from its own connection while the window reads and writes:
+        # WAL lets readers continue during a write, and the timeout waits out a short lock
+        self.conn = sqlite3.connect(self.path, check_same_thread=False, timeout=30)
         self.conn.row_factory = sqlite3.Row
+        self.conn.execute("PRAGMA journal_mode = WAL")
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.conn.executescript(SCHEMA)
         for table in IMMUTABLE:
@@ -313,6 +316,28 @@ class Registry:
         self._insert("trial_events", {"batch_id": batch_id, "trial_index": trial_index, "event": event,
                                       "params": canonical_json(params) if params is not None else None,
                                       "experiment_id": experiment_id, "detail": detail, "created_at": _now()})
+
+    def register_trials(self, batch_id: str, trials: list[tuple[int, dict]]) -> None:
+        """Register many trials in one transaction (all or none)."""
+        ts = _now()
+        with self.conn:
+            self.conn.executemany(
+                "INSERT INTO trial_events (batch_id, trial_index, event, params, created_at) VALUES (?, ?, 'registered', ?, ?)",
+                [(batch_id, i, canonical_json(p), ts) for i, p in trials])
+
+    def batches_for(self, strategy_id: str) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT b.* FROM batches b JOIN strategies s ON s.strategy_hash=b.strategy_hash "
+            "WHERE s.strategy_id=? ORDER BY b.created_at, b.batch_id", (strategy_id,))
+        return [dict(r) | {"config": json.loads(r["config"])} for r in rows]
+
+    def trial_events_for(self, strategy_id: str) -> list[dict]:
+        """Every trial event of the family's batches, oldest first."""
+        rows = self.conn.execute(
+            "SELECT t.batch_id, t.trial_index, t.event, t.params, t.detail FROM trial_events t "
+            "JOIN batches b ON b.batch_id=t.batch_id JOIN strategies s ON s.strategy_hash=b.strategy_hash "
+            "WHERE s.strategy_id=? ORDER BY t.event_id", (strategy_id,))
+        return [dict(r) for r in rows]
 
     def trial_status(self, batch_id: str) -> dict[int, str]:
         """Latest event per trial index."""

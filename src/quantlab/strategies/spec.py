@@ -122,6 +122,10 @@ def check_schema(spec: Any) -> list[str]:
     rules = spec["rules"]
     if rules["kind"] == "declarative":
         p += validate_rules(rules, un["symbols"], ex["rebalance"])
+        if "combo" in rules and isinstance(params, dict):
+            from quantlab.strategies.combo import validate_params
+
+            p += validate_params(params)
     elif rules["kind"] == "python":
         if ":" not in str(rules.get("entry", "")):
             p.append("rules.entry must be 'file.py:ClassName' for python rules")
@@ -227,6 +231,12 @@ def load_spec(path: str | Path) -> LoadedSpec:
         symbols, rebalance = spec["universe"]["symbols"], spec["execution"]["rebalance"]
 
         def factory(**params):
+            if "combo" in rules:
+                from quantlab.strategies.combo import build_rules
+                from quantlab.strategies.entry_exit import EntryExitStrategy
+
+                return EntryExitStrategy(spec_id=sid, spec_version_str=ver, symbols=symbols,
+                                         rules=build_rules(rules["combo"], params), fast=True, **params)
             if "entry_exit" in rules:
                 from quantlab.strategies.declarative import _apply_params
                 from quantlab.strategies.entry_exit import EntryExitStrategy, resolve_params

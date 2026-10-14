@@ -67,6 +67,21 @@ class MarketView:
         lo = max(0, self._t + 1 - n)
         return self._data.values(symbol)[lo: self._t + 1].copy()
 
+    def indicator(self, symbol: str, key: tuple) -> float | None:
+        """One of the app's causal indicators (`quantlab.strategies.indicators`) at the current bar.
+
+        The whole series is computed once per dataset and cached; only today's value is returned."""
+        from quantlab.strategies.indicators import series
+
+        cache = self._data.__dict__.setdefault("_indicators", {})
+        arr = cache.get((symbol, key))
+        if arr is None:
+            arr = series(self._data.values(symbol), key)
+            arr.setflags(write=False)
+            cache[(symbol, key)] = arr
+        v = arr[self._t]
+        return float(v) if np.isfinite(v) else None
+
     def total_return(self, symbol: str) -> pd.Series:
         return total_return_index(self._frame(symbol))
 

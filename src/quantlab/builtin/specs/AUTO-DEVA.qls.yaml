@@ -1,0 +1,51 @@
+# Generator spec of the automatic strategy search for 선진국 A. Its parameters pick one building block
+# from each list (quantlab.strategies.combo, catalog 1); every combination is one registered trial.
+# The search runs on TRAIN+VALIDATION only. A candidate is this spec with its parameters fixed
+# (후보 확정), and only the user starts its final evaluation.
+spec_version: 1
+strategy:
+  id: AUTO-DEVA
+  version: 1.0.0
+  name: 자동 탐색 · 선진국 A
+  type: mean_reversion
+  author: claude
+  parent: null
+  derived_after_holdout_view: false
+hypothesis:
+  class: data_mining
+  economic_rationale: >
+    Short-horizon swing rules (oversold rebounds, moving-average and MACD signals) on developed-market country ETFs (Japan, Germany, UK, Canada, Australia, France, Switzerland, Hong Kong, Singapore).
+    No single rule is claimed in advance: the search tests a fixed grid and only combinations that
+    clear cost, consistency and multiple-testing filters become candidates.
+  expected_risks:
+    - many trials make lucky combinations look good (corrected by the trial count)
+    - legs are correlated; several ETFs signal on the same day
+    - 0.6% round-trip cost removes small edges
+  falsification: >
+    On the holdout (2017-01 onward), net Sharpe not above SPY buy-and-hold with block-bootstrap
+    p < 0.10, or max drawdown above 80% of SPY's.
+universe:
+  market: US_ETF
+  symbols: [EWJ, EWG, EWU, EWC, EWA, EWQ, EWL, EWH, EWS, SPY, BIL]
+  frequency: daily
+rules:
+  kind: declarative
+  combo:
+    catalog: 1
+    trade: [EWJ, EWG, EWU, EWC, EWA, EWQ, EWL, EWH, EWS]
+    slots: 5
+execution:
+  signal_time: close
+  fill: next_open
+  rebalance: daily
+parameters:
+  entry: {default: z20_1.5, search: [z20_1.5, z20_2.0, z20_2.5, rsi2_5, rsi2_10, rsi2_15, down3, down4, down5, ret5_3, ret5_5, ret5_8, ret10_5, ret10_8, ret10_12, low20, ibs_0.1, ibs_0.2, below5_2, below5_4, below20_4, below20_7, below60_7, below60_12, below120_10, below120_15, golden5_20, golden20_60, golden60_120, breakup20, breakup60, breakup120, macd_up, macd_up_neg]}
+  filter: {default: none, search: [none, up200, up120, aligned, down200, macd_pos]}
+  exit: {default: none, search: [none, above5, above10, above20, rsi2_70, macd_dn, below20]}
+  max_hold: {default: 5, search: [5, 10, 20, 30]}
+  stop: {default: 0, search: [0, 0.1]}
+  take: {default: 0, search: [0, 0.1]}
+benchmark: SPY_buy_and_hold
+costs: {one_way_bps: 30}   # informational; the validation policy's costs are binding
+validation:
+  policy: auto_dev_a_v1

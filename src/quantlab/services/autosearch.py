@@ -1,0 +1,395 @@
+"""Automatic strategy search (design doc 2026-10-14, user-approved; D-020).
+
+The app combines building blocks (`quantlab.strategies.combo`) on one ETF group at a time and keeps
+only combinations that clear fixed filters. It never needs Claude and never reads the holdout:
+
+  * one generator spec per group (builtin specs AUTO-*), one validation policy per group whose
+    `auto_search` block holds the filters, fixed before any data of the group was seen;
+  * the full grid is shuffled once with a fixed seed; each run takes the next untried
+    combinations (3,000 by default) and registers ALL of them before the first one runs;
+  * workers receive only TRAIN+VALIDATION data (`dev_data` cuts the holdout before they start);
+  * every trial counts: the t-value a candidate needs grows with the family's trial count
+    (one-sided Bonferroni), and the final evaluation's DSR uses the same count;
+  * candidates are listed for the user; confirming one and running its final evaluation is the
+    user's decision, and a second final evaluation in the same group cannot PASS (holdout reused).
+
+A trial's numbers are stored on its 'done' trial event (no experiment row per trial, so the
+history screen is not flooded); opening a candidate runs a normal recorded backtest.
+"""
+
+from __future__ import annotations
+
+import json
+import math
+import multiprocessing as mp
+import os
+import uuid
+from datetime import datetime, timezone
+from typing import Callable
+
+import numpy as np
+import pandas as pd
+from scipy import stats
+
+from quantlab.analysis.trades import episodes, without_best_year
+from quantlab.backtesting.engine import run_backtest
+from quantlab.core.hashing import canonical_json, restore_numbers
+from quantlab.core.market_data import MarketData
+from quantlab.strategies import combo
+from quantlab.strategies.spec import load_spec
+from quantlab.validation import metrics as M
+from quantlab.validation.engine import BuyAndHold, _cfg, _rf, dev_data
+
+GROUPS = ("AUTO-DEVA", "AUTO-DEVB", "AUTO-EM", "AUTO-REAL")
+
+# filter code -> Korean label, in the order they are checked
+FILTERS = [
+    ("trades", "거래 수 부족"),
+    ("gross", "거래당 비용 전 수익 부족"),
+    ("splits", "TRAIN·VALIDATION 중 손실 구간"),
+    ("cost2x", "비용 2배에서 손실"),
+    ("spy", "SPY 보유보다 낮은 수익률"),
+    ("mdd", "최대 낙폭 과다"),
+    ("top10", "상위 10건 빼면 손실"),
+    ("bestyear", "최고의 해 빼면 손실"),
+    ("tvalue", "시험 개수 대비 통계 강도 부족"),
+    ("neighbours", "이웃 조합이 버티지 못함"),
+]
+FILTER_LABEL = dict(FILTERS)
+
+
+def key(params: dict) -> str:
+    return canonical_json({k: params[k] for k in combo.PARAMS})
+
+
+def required_t(n_trials: int, alpha: float) -> float:
+    """One-sided Bonferroni threshold for the family's trial count."""
+    return float(stats.norm.ppf(1 - alpha / max(int(n_trials), 1)))
+
+
+# ----------------------------------------------------------------------------- one trial
+def _split_return(equity: pd.Series, start, end) -> float | None:
+    e = equity[(equity.index >= pd.Timestamp(start)) & (equity.index <= pd.Timestamp(end))]
+    before = equity[equity.index < pd.Timestamp(start)]
+    base = before.iloc[-1] if len(before) else (e.iloc[0] if len(e) else None)
+    if base is None or not len(e) or base <= 0:
+        return None
+    return float(e.iloc[-1] / base - 1)
+
+
+def trial_metrics(factory, params: dict, dev: MarketData, policy: dict) -> dict:
+    """Numbers the filters need, from one run at normal costs (and one at doubled costs when the
+    cheap filters pass). TRAIN+VALIDATION data only."""
+    auto = policy["auto_search"]
+    sp = policy["splits"]
+    res = run_backtest(factory(**params), dev, _cfg(policy))
+    eq = res.equity
+    ep = episodes(res, dev).dropna(subset=["gross"])
+    train_end = pd.Timestamp(sp["train"][1])
+    m: dict = {"n": int(len(ep)), "n_train": int((ep["entry"] <= train_end).sum()),
+               "n_validation": int((ep["entry"] > train_end).sum())}
+    if len(ep):
+        net = ep["net"].to_numpy()
+        by_day = ep.groupby("entry")["net"].mean().to_numpy()
+        k = len(by_day)
+        sd = float(np.std(by_day, ddof=1)) if k > 1 else float("nan")
+        m.update(gross=float(ep["gross"].mean()), net=float(net.mean()), entry_days=int(k),
+                 net_ex_top10=float(np.sort(net)[::-1][10:].mean()) if len(net) > 10 else None,
+                 t=float(by_day.mean() / (sd / math.sqrt(k))) if k > 1 and sd > 0 else None,
+                 win_rate=float((net > 0).mean()), mean_sessions=float(ep["sessions"].mean()))
+    rf = _rf(dev, policy)
+    m.update(cagr=M.cagr(eq), mdd=M.max_drawdown(eq), sharpe=M.sharpe(res.returns(), rf),
+             ret_train=_split_return(eq, sp["train"][0], sp["train"][1]),
+             ret_validation=_split_return(eq, sp["validation"][0], sp["validation"][1]),
+             cagr_ex_best_year=without_best_year(eq).get("cagr_ex_best_year"))
+    if _support(m, auto):
+        stressed = run_backtest(factory(**params), dev, _cfg(policy, float(auto["stress_cost_multiplier"])))
+        m["cagr_2x"] = M.cagr(stressed.equity)
+    return m
+
+
+def _support(m: dict, auto: dict) -> bool:
+    """trades, gross and both splits positive (the cheap filters; neighbours must clear these too)."""
+    return (m["n_train"] >= auto["min_trades_train"] and m["n_validation"] >= auto["min_trades_validation"]
+            and (m.get("gross") or -1) >= auto["min_gross_per_trade"]
+            and (m.get("ret_train") or -1) > 0 and (m.get("ret_validation") or -1) > 0)
+
+
+def first_failure(m: dict, auto: dict, beat_cagr: float, t_req: float) -> str | None:
+    """The first filter a trial fails (before the neighbour check), or None."""
+    if m["n_train"] < auto["min_trades_train"] or m["n_validation"] < auto["min_trades_validation"]:
+        return "trades"
+    if (m.get("gross") or -1) < auto["min_gross_per_trade"]:
+        return "gross"
+    if not ((m.get("ret_train") or -1) > 0 and (m.get("ret_validation") or -1) > 0):
+        return "splits"
+    if not (m.get("cagr_2x") is not None and m["cagr_2x"] > 0):
+        return "cost2x"
+    if not m["cagr"] > beat_cagr:
+        return "spy"
+    if not m["mdd"] > auto["max_drawdown_floor"]:
+        return "mdd"
+    if not (m.get("net_ex_top10") is not None and m["net_ex_top10"] > 0):
+        return "top10"
+    if not (m.get("cagr_ex_best_year") is not None and m["cagr_ex_best_year"] > 0):
+        return "bestyear"
+    if not (m.get("t") is not None and m["t"] >= t_req):
+        return "tvalue"
+    return None
+
+
+def neighbour_ok(m: dict, auto: dict) -> bool:
+    return _support(m, auto) and m.get("cagr_2x") is not None and m["cagr_2x"] > 0
+
+
+# ----------------------------------------------------------------------------- workers
+_W: dict = {}
+
+
+def _init_worker(spec_path: str, strategy_hash: str, policy: dict, dev: MarketData) -> None:
+    loaded = load_spec(spec_path)
+    if loaded.strategy_hash != strategy_hash:
+        raise RuntimeError("spec changed on disk")
+    _W.update(loaded=loaded, policy=policy, dev=dev)
+
+
+def _run_trial(task: tuple[int, dict]) -> tuple[int, dict | None, str | None]:
+    idx, params = task
+    try:
+        p = {**_W["loaded"].default_params, **params}
+        return idx, trial_metrics(_W["loaded"].factory, p, _W["dev"], _W["policy"]), None
+    except Exception as e:  # recorded as a failed trial, never silently dropped
+        return idx, None, f"{type(e).__name__}: {e}"
+
+
+# ----------------------------------------------------------------------------- service
+class AutoSearch:
+    def __init__(self, lab) -> None:
+        self.lab = lab
+        self._loaded: dict[str, tuple] = {}
+
+    # --- set-up --------------------------------------------------------------------
+    def spec_path(self, group: str):
+        from quantlab.services.lab import builtin_path
+
+        if group not in GROUPS:
+            raise KeyError(group)
+        return builtin_path("specs", f"{group}.qls.yaml")
+
+    def loaded(self, group: str):
+        """Register the group's generator spec (once) and return (strategy hash, loaded spec)."""
+        if group not in self._loaded:
+            imp = self.lab.import_strategy(self.spec_path(group))
+            if imp.problems and imp.state == "IDEA":
+                raise RuntimeError("; ".join(imp.problems))
+            self._loaded[group] = (imp.strategy_hash, imp.loaded)
+        return self._loaded[group]
+
+    def policy(self, group: str) -> tuple[str, dict]:
+        _, loaded = self.loaded(group)
+        return self.lab.policy_for(loaded)
+
+    def order(self, loaded, policy: dict) -> list[dict]:
+        """The fixed order of the whole grid (pre-registered by the spec, the catalog and the seed)."""
+        from quantlab.services.batch import grid
+
+        g = grid(loaded.search_space)
+        perm = np.random.default_rng(int(policy["auto_search"]["order_seed"])).permutation(len(g))
+        return [g[i] for i in perm]
+
+    # --- records -------------------------------------------------------------------
+    def trials(self, group: str) -> dict[str, dict]:
+        """Latest state of every trial of the family, by combination."""
+        by_id: dict[tuple, dict] = {}
+        for ev in self.lab.registry.trial_events_for(group):
+            tid = (ev["batch_id"], ev["trial_index"])
+            st = by_id.setdefault(tid, {"id": tid, "params": None, "status": None, "metrics": None, "detail": None})
+            if ev["params"]:
+                st["params"] = json.loads(ev["params"])
+            st["status"] = ev["event"]
+            if ev["event"] == "done" and ev["detail"]:
+                st["metrics"] = restore_numbers(json.loads(ev["detail"]))
+            elif ev["event"] == "failed":
+                st["detail"] = ev["detail"]
+        return {key(v["params"]): v for v in by_id.values() if v["params"]}
+
+    def n_trials(self, group: str, policy: dict) -> int:
+        return self.lab.registry.count_trials_for_family(group) + int(policy["auto_search"].get("prior_trials", 0))
+
+    def beat_cagr(self, group: str) -> float | None:
+        for b in reversed(self.lab.registry.batches_for(group)):
+            if b["config"].get("beat_cagr") is not None:
+                return float(b["config"]["beat_cagr"])
+        return None
+
+    # --- running -------------------------------------------------------------------
+    def run(self, group: str, workers: int = 0, progress: Callable[[int, int], None] | None = None,
+            should_stop: Callable[[], bool] | None = None, say: Callable[[str], None] | None = None,
+            limit: int | None = None) -> dict:
+        """One run: the next `trials_per_run` untried combinations (or `limit`, for tests), or the
+        unfinished trials of an interrupted run. Neighbours of combinations that clear every other
+        filter are registered and run afterwards."""
+        say = say or (lambda s: None)
+        reg = self.lab.registry
+        strategy_hash, loaded = self.loaded(group)
+        policy_hash, policy = self.lab.policy_for(loaded)
+        auto = policy["auto_search"]
+        version = self.lab.ensure_dataset(loaded.spec["universe"]["symbols"], policy["splits"]["train"][0], say)
+        data, _ = self.lab._strategy_symbols_data(loaded, version)
+        dev = dev_data(data, policy)  # the holdout is cut here, before any worker exists
+        bench = run_backtest(BuyAndHold(auto["beat_symbol"]), dev, _cfg(policy))
+        beat = M.cagr(bench.equity)
+
+        known = self.trials(group)
+        pending = [v for v in known.values() if v["status"] in ("registered", "cancelled")]
+        if pending:  # an interrupted run: finish exactly those trials first
+            say(f"이전 탐색에서 남은 {len(pending)}개를 이어서 시험합니다")
+            batch_id = pending[0]["id"][0]
+            todo = [(v["id"][1], v["params"], v["id"][0]) for v in pending]
+        else:
+            fresh = [p for p in self.order(loaded, policy) if key(p) not in known][: int(limit or auto["trials_per_run"])]
+            if not fresh:
+                return self.summary(group) | {"note": "이 묶음의 조합을 모두 시험했습니다."}
+            batch_id = f"A-{datetime.now(timezone.utc):%Y%m%d%H%M%S}-{uuid.uuid4().hex[:6]}"
+            reg.create_batch(batch_id, strategy_hash, version,
+                             {"auto": True, "catalog": combo.CATALOG, "trials": fresh, "policy_hash": policy_hash,
+                              "scope": "dev", "beat_symbol": auto["beat_symbol"], "beat_cagr": beat})
+            reg.register_trials(batch_id, list(enumerate(fresh)))
+            todo = [(i, p, batch_id) for i, p in enumerate(fresh)]
+
+        n_workers = workers if workers > 0 else max(1, (os.cpu_count() or 2) - 1)
+        init = (str(loaded.path), strategy_hash, policy, dev)
+        done = [0]
+        total = [len(todo)]
+        stopped = [False]
+
+        def record(task_batch: str, idx: int, params: dict, m: dict | None, err: str | None) -> None:
+            if err is not None:
+                reg.trial_event(task_batch, idx, "failed", params, detail=err)
+            else:
+                reg.trial_event(task_batch, idx, "done", params, detail=canonical_json(m))
+            done[0] += 1
+            if progress:
+                progress(done[0], total[0])
+
+        def run_tasks(tasks: list[tuple[int, dict, str]]) -> None:
+            by_idx = {(b, i): p for i, p, b in tasks}
+            batch_of = {i: b for i, p, b in tasks}
+            if len({b for _, _, b in tasks}) > 1:  # resume across batches: run each batch's trials in turn
+                for b in sorted({b for _, _, b in tasks}):
+                    run_tasks([t for t in tasks if t[2] == b])
+                    if stopped[0]:
+                        return
+                return
+            jobs = [(i, p) for i, p, _ in tasks]
+            if n_workers == 1 or len(jobs) <= 1:
+                _init_worker(*init)
+                for job in jobs:
+                    if should_stop and should_stop():
+                        stopped[0] = True
+                        return
+                    i, m, err = _run_trial(job)
+                    record(batch_of[i], i, by_idx[(batch_of[i], i)], m, err)
+                return
+            ctx = mp.get_context("spawn")
+            with ctx.Pool(min(n_workers, len(jobs)), initializer=_init_worker, initargs=init) as pool:
+                for i, m, err in pool.imap_unordered(_run_trial, jobs):
+                    record(batch_of[i], i, by_idx[(batch_of[i], i)], m, err)
+                    if should_stop and should_stop():
+                        stopped[0] = True
+                        pool.terminate()
+                        return
+
+        say("조합 시험 중")
+        run_tasks(todo)
+        # neighbours of every combination that cleared the other filters (a few rounds at most)
+        for _ in range(3):
+            if stopped[0]:
+                break
+            need = self._missing_neighbours(group, policy, beat)
+            if not need:
+                break
+            say(f"후보의 이웃 조합 {len(need)}개 확인 중")
+            start = 1 + max((v["id"][1] for v in self.trials(group).values() if v["id"][0] == batch_id), default=-1)
+            extra = [(start + j, p) for j, p in enumerate(need)]
+            reg.register_trials(batch_id, extra)
+            total[0] += len(extra)
+            run_tasks([(i, p, batch_id) for i, p in extra])
+        if stopped[0]:
+            for v in self.trials(group).values():
+                if v["status"] == "registered":
+                    reg.trial_event(v["id"][0], v["id"][1], "cancelled", v["params"])
+        return self.summary(group) | {"stopped": stopped[0]}
+
+    def _missing_neighbours(self, group: str, policy: dict, beat: float) -> list[dict]:
+        auto = policy["auto_search"]
+        known = self.trials(group)
+        t_req = required_t(self.n_trials(group, policy), auto["alpha"])
+        need: dict[str, dict] = {}
+        for v in known.values():
+            if v["metrics"] is None or first_failure(v["metrics"], auto, beat, t_req) is not None:
+                continue
+            for nb in combo.neighbours(v["params"]):
+                k = key(nb)
+                if k not in known:
+                    need[k] = nb
+        return list(need.values())
+
+    # --- results -------------------------------------------------------------------
+    def summary(self, group: str) -> dict:
+        strategy_hash, loaded = self.loaded(group)
+        _, policy = self.lab.policy_for(loaded)
+        auto = policy["auto_search"]
+        known = self.trials(group)
+        n = self.n_trials(group, policy)
+        t_req = required_t(n, auto["alpha"])
+        beat = self.beat_cagr(group)
+        funnel = {code: 0 for code, _ in FILTERS}
+        rows = []
+        for v in known.values():
+            m = v["metrics"]
+            if m is None or beat is None:
+                continue
+            fail = first_failure(m, auto, beat, t_req)
+            if fail is None:
+                nbs = [known.get(key(p)) for p in combo.neighbours(v["params"])]
+                tried = [x for x in nbs if x is not None and x["metrics"] is not None]
+                ok = sum(1 for x in tried if neighbour_ok(x["metrics"], auto))
+                if len(tried) < len(nbs):
+                    fail = "neighbours" if tried and ok < auto["neighbour_min_share"] * len(nbs) else None
+                    status = "이웃 확인 대기" if fail is None else None
+                else:
+                    fail = None if nbs and ok >= auto["neighbour_min_share"] * len(nbs) else "neighbours"
+                    status = None
+                if fail is None:
+                    rows.append({"params": v["params"], "rule": combo.describe(v["params"]),
+                                 "neighbours": f"{ok}/{len(nbs)}", "status": status or "후보", **m})
+            if fail is not None:
+                funnel[fail] += 1
+        rows.sort(key=lambda r: -(r.get("t") or 0))
+        grid_size = len(self.order(loaded, policy))
+        done = sum(1 for v in known.values() if v["status"] == "done")
+        reads = sum(1 for r in self.lab.registry.holdout_ledger() if r["strategy_family"] == group)
+        return {"group": group, "name": loaded.spec["strategy"]["name"], "strategy_hash": strategy_hash,
+                "grid": grid_size, "tried": len(known), "done": done,
+                "failed": sum(1 for v in known.values() if v["status"] == "failed"),
+                "pending": sum(1 for v in known.values() if v["status"] in ("registered", "cancelled")),
+                "family_trials": n, "t_required": t_req, "beat_symbol": auto["beat_symbol"], "beat_cagr": beat,
+                "funnel": [{"code": c, "label": lbl, "count": funnel[c]} for c, lbl in FILTERS],
+                "candidates": rows, "holdout_reads": reads}
+
+    # --- a candidate -----------------------------------------------------------------
+    def open_candidate(self, group: str, params: dict):
+        """A normal recorded exploratory backtest of one combination (TRAIN+VALIDATION)."""
+        strategy_hash, loaded = self.loaded(group)
+        _, policy = self.lab.policy_for(loaded)
+        version = self.lab.ensure_dataset(loaded.spec["universe"]["symbols"], policy["splits"]["train"][0])
+        return self.lab.backtest(strategy_hash, version, params)
+
+    def final_evaluation(self, group: str, params: dict):
+        """Confirm the combination and read the group's holdout once. Only the user starts this."""
+        strategy_hash, loaded = self.loaded(group)
+        _, policy = self.lab.policy_for(loaded)
+        version = self.lab.ensure_dataset(loaded.spec["universe"]["symbols"], policy["splits"]["train"][0])
+        self.lab.confirm_candidate(strategy_hash, params, note="automatic search candidate")
+        return self.lab.final_evaluation(strategy_hash, version)
