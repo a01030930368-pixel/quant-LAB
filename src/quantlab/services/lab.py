@@ -68,6 +68,7 @@ class Lab:
         self.registry = Registry(self.ws.registry_path)
         self.data = DataStore(self.ws.root, self.registry)
         self.register_builtin_policies()
+        self.copy_example_specs()
 
     def close(self) -> None:
         self.registry.close()
@@ -84,6 +85,15 @@ class Lab:
     def register_builtin_policies(self) -> None:
         for p in sorted(builtin_path("policies").glob("*.yaml")):
             self.register_policy_file(p)
+
+    def copy_example_specs(self) -> Path:
+        """Put the bundled example specs in the work folder, where file dialogs open."""
+        dest = self.ws.path("examples")
+        dest.mkdir(parents=True, exist_ok=True)
+        for f in resources.files("quantlab.builtin").joinpath("specs").iterdir():
+            if f.name.endswith(".qls.yaml") and not (dest / f.name).exists():
+                (dest / f.name).write_bytes(f.read_bytes())
+        return dest
 
     def policy_for(self, loaded: LoadedSpec) -> tuple[str, dict]:
         """`validation.policy` is 'name_vN' (exact version) or 'name' (latest version)."""

@@ -38,3 +38,13 @@ def test_final_evaluation_requires_confirmation_and_uses_confirmed_params(lab):
 def test_cli_selftest_exit_code():
     from quantlab.cli import main
     assert main(["selftest"]) == 0
+
+
+def test_example_specs_copied_to_work_folder(tmp_path):
+    from quantlab.services.lab import Lab
+
+    lab = Lab(tmp_path / "QL")
+    try:
+        assert (tmp_path / "QL" / "examples" / "TT-SPY-SMA.qls.yaml").is_file()
+    finally:
+        lab.close()

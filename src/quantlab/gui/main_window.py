@@ -289,7 +289,7 @@ class StrategyScreen(Screen):
 
     def import_spec(self, path: str | None = None):
         if not path:
-            path, _ = QFileDialog.getOpenFileName(self, "전략 명세서", "", "QUANT LAB 명세서 (*.qls.yaml *.yaml)")
+            path, _ = QFileDialog.getOpenFileName(self, "전략 명세서", str(self.lab.ws.path("examples")), "QUANT LAB 명세서 (*.qls.yaml *.yaml)")
         if not path:
             return
 
