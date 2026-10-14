@@ -14,7 +14,7 @@ from quantlab.strategies.trend_timing import TrendTiming
 from synthetic import random_market, regime_market
 
 REPO = Path(__file__).resolve().parents[2]
-BASELINE = REPO / "strategies" / "specs" / "TT-SPY-SMA.qls.yaml"
+BASELINE = REPO / "src" / "quantlab" / "builtin" / "specs" / "TT-SPY-SMA.qls.yaml"
 
 
 @pytest.fixture

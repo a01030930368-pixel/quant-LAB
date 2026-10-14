@@ -3,12 +3,10 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .hypothesis/
-# Market data is versioned by manifest hash, not by git
-data/raw/*
-data/processed/*
-!data/raw/.gitkeep
-!data/processed/.gitkeep
-# Large experiment artifacts; summaries and reports are tracked
-experiments/**/*.parquet
+# Research data never belongs in this (public) repo: it lives in the user's work folder
+QuantLab/
 registry.sqlite
+*.parquet
+dist/
+build/
 .env

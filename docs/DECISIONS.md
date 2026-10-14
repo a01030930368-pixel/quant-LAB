@@ -81,3 +81,20 @@ tests cannot see that. Code runs in-process for now; a worker process with a tim
 with batch execution (M11). Not a security boundary: users should import code only from sources
 they trust, and the app shows code before import.
 Baseline param renamed sma_months → lookback_months (class, policy v1 before registration).
+
+## D-011 · 2026-10-14 · Service layer, CLI, self-test; builtin assets in the package
+`quantlab.services.Lab` is the only API the GUI and CLI call. Exploratory backtests receive
+TRAIN+VALIDATION data only; `final_evaluation` requires a recorded candidate confirmation
+(append-only `confirmations` table; state → VALIDATION) and uses the confirmed parameters, never
+caller-supplied ones. Policies and the baseline spec ship inside the package
+(`quantlab/builtin`) so a frozen build carries them; the repo no longer has data/, experiments/
+or reports/ folders (research data lives in the user's work folder; the repo is public).
+`quantlab selftest` runs the whole flow on synthetic data drawn on real NYSE sessions; an
+integration test runs it with sockets disabled (R1–R3).
+
+## D-012 · 2026-10-14 · Costs from the user's standing rule; baseline is engine verification only
+The prior-project handoff fixes one-way commission at 0.25% (Kiwoom US equities) and distrusts
+profits that vanish at 2x cost. Policy trend_timing_v1 now uses 25bp commission + 5bp slippage and
+a 2x cost stress in Gate 4 (was 5bp total and a 25bp slippage stress). Changed before any data
+download or registration; stricter only. The user excludes index-tracking/momentum strategies,
+so TT-SPY-SMA stays solely to verify the app end to end and is labelled so in its spec.

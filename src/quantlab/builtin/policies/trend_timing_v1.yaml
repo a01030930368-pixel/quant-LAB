@@ -3,6 +3,9 @@
 # (strategy_family renamed TREND_TIMING_SMA -> TT-SPY-SMA the same day, before first registration,
 #  to match the spec id in 03 v2.0.0 4.2, and parameter sma_months -> lookback_months to match the
 #  spec parameter name; no thresholds changed.)
+# (costs raised 5bp -> 25bp commission + 5bp slippage and the cost stress set to 2x, the same day,
+#  after the user's prior-project handoff fixed 0.25% one-way as the standard; still before any
+#  market data was downloaded or the policy registered. Stricter, not looser.)
 # Frozen: the registry stores its hash; changing anything requires version: 2,
 # and results under version 1 stay as they are (protocol 제23~24조).
 policy_id: trend_timing
@@ -20,7 +23,7 @@ splits:
   forward_holdout_start: "2026-10-15" # data accumulating after registration
 
 costs:                  # one-way, applied to every fill
-  commission_bps: 0.0
+  commission_bps: 25.0         # user's standing rule: Kiwoom US equities 0.25% one-way (promo 0.07% is reference only)
   slippage_bps: 5.0
   fixed_fee: 0.0
 
@@ -41,7 +44,7 @@ gate3:                  # independent evaluation on HOLDOUT, net of base costs
   min_sessions: 504
 
 gate4_partial:          # evaluated only if gate 3 passes; failure -> HOLD
-  stress_slippage_bps: 25.0
+  stress_cost_multiplier: 2.0  # user's rule: profits that vanish at 2x cost are not trusted
   stress_min_sharpe_diff: 0.0
   neighbor_params: {lookback_months: [8, 12]}
   neighbor_min_sharpe_diff: 0.0

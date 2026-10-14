@@ -20,7 +20,10 @@ uv run pytest
 - `src/quantlab/backtesting` — fills, costs, cash/share accounting, independent reference implementation
 - `src/quantlab/validation` — splits, metrics, statistical tests, gates, verdicts
 - `src/quantlab/registry` — append-only experiment store and reproduction
-- `policy/` — frozen validation policies (research code must not edit these)
+- `src/quantlab/builtin` — bundled validation policies (frozen) and the baseline strategy spec
+
+This repository holds application source only. Market data, experiment records, reports and
+imported strategies live in the user's work folder (default `Documents\QuantLab`), never here.
 
 Credentials are read from environment variables only and are never written to
 logs, the registry or files.

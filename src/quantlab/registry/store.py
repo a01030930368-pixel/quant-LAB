@@ -19,7 +19,7 @@ from quantlab.core import app_info
 from quantlab.core.hashing import canonical_json, stable_hash
 
 IMMUTABLE = ("hypotheses", "policies", "datasets", "experiments", "verdicts", "holdout_ledger", "state_changes",
-             "strategies", "batches", "trial_events", "exports")
+             "strategies", "batches", "trial_events", "exports", "confirmations")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS hypotheses (
@@ -97,6 +97,13 @@ CREATE TABLE IF NOT EXISTS exports (
     includes_holdout INTEGER NOT NULL,
     path TEXT NOT NULL,
     contents TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS confirmations (
+    confirmation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,
+    strategy_hash TEXT NOT NULL REFERENCES strategies(strategy_hash),
+    params TEXT NOT NULL,
+    policy_hash TEXT NOT NULL REFERENCES policies(policy_hash),
+    note TEXT);
 CREATE TABLE IF NOT EXISTS state_changes (
     change_id INTEGER PRIMARY KEY AUTOINCREMENT,
     created_at TEXT NOT NULL,
@@ -167,6 +174,36 @@ class Registry:
         if row is None:
             raise KeyError(policy_hash)
         return json.loads(row["body"])
+
+    def policy_by_name(self, policy_id: str) -> tuple[str, dict]:
+        """Latest registered version of a policy."""
+        row = self.conn.execute("SELECT policy_hash, body FROM policies WHERE policy_id=? ORDER BY version DESC LIMIT 1",
+                                (policy_id,)).fetchone()
+        if row is None:
+            raise KeyError(f"policy '{policy_id}' is not registered")
+        return row["policy_hash"], json.loads(row["body"])
+
+    def policies(self) -> list[dict]:
+        rows = self.conn.execute("SELECT policy_hash, policy_id, version, created_at FROM policies ORDER BY policy_id, version")
+        return [dict(r) for r in rows]
+
+    def experiments(self, strategy_id: str | None = None, kind: str | None = None) -> list[dict]:
+        q, args = "SELECT * FROM experiments WHERE 1=1", []
+        if strategy_id:
+            q += " AND strategy_id=?"
+            args.append(strategy_id)
+        if kind:
+            q += " AND kind=?"
+            args.append(kind)
+        rows = self.conn.execute(q + " ORDER BY created_at", args)
+        return [dict(r) | {"config": json.loads(r["config"]), "metrics": json.loads(r["metrics"])} for r in rows]
+
+    def state_history(self, strategy_id: str | None = None) -> list[dict]:
+        q = "SELECT * FROM state_changes" + (" WHERE strategy_id=?" if strategy_id else "") + " ORDER BY change_id"
+        return [dict(r) for r in self.conn.execute(q, (strategy_id,) if strategy_id else ())]
+
+    def holdout_ledger(self) -> list[dict]:
+        return [dict(r) for r in self.conn.execute("SELECT * FROM holdout_ledger ORDER BY access_id")]
 
     def register_dataset(self, dataset_version: str, manifest: dict) -> None:
         if self.conn.execute("SELECT 1 FROM datasets WHERE dataset_version=?", (dataset_version,)).fetchone():
@@ -294,6 +331,16 @@ class Registry:
         n_single = self.conn.execute("SELECT COUNT(*) AS n FROM experiments WHERE strategy_id=? AND batch_id IS NULL",
                                      (strategy_id,)).fetchone()["n"]
         return int(n_trials) + int(n_single)
+
+    def confirm_candidate(self, strategy_hash: str, params: dict, policy_hash: str, note: str = "") -> None:
+        """User fixes parameters and policy before the final evaluation (03 v2.0.0 §3.3 E)."""
+        self._insert("confirmations", {"created_at": _now(), "strategy_hash": strategy_hash,
+                                       "params": canonical_json(params), "policy_hash": policy_hash, "note": note})
+
+    def confirmation(self, strategy_hash: str) -> dict | None:
+        row = self.conn.execute("SELECT * FROM confirmations WHERE strategy_hash=? ORDER BY confirmation_id DESC LIMIT 1",
+                                (strategy_hash,)).fetchone()
+        return dict(row) | {"params": json.loads(row["params"])} if row else None
 
     # --- holdout ledger -------------------------------------------------
     def holdout_accesses(self, strategy_family: str, policy_hash: str) -> int:

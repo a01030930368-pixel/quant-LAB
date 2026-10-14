@@ -48,11 +48,12 @@ def random_market(seed: int, n: int = 300, symbols=("AAA", "BBB"), start="2015-0
 
 
 def regime_market(seed: int, start="2000-01-03", end="2023-12-29", bull=(0.015, 0.03), bear=(-0.08, 0.06),
-                  stay=(0.97, 0.93), risk="SPY", cash="BIL") -> MarketData:
+                  stay=(0.97, 0.93), risk="SPY", cash="BIL", index: pd.DatetimeIndex | None = None) -> MarketData:
     """Monthly Markov regimes (persistent bull/bear) on daily bars: trend following has a
-    genuine built-in edge here. Used as the PASS control."""
+    genuine built-in edge here. Used as the PASS control. `index` overrides the business-day
+    calendar (e.g. real exchange sessions so data-quality checks pass)."""
     rng = np.random.default_rng(seed)
-    idx = pd.bdate_range(start, end)
+    idx = index if index is not None else pd.bdate_range(start, end)
     months = pd.PeriodIndex(idx, freq="M")
     state, states = 0, {}
     for mth in months.unique():

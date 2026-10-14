@@ -61,10 +61,10 @@ class BuyAndHold(Strategy):
         return {self.symbol: 1.0}
 
 
-def _cfg(policy: dict, slippage_bps: float | None = None) -> BacktestConfig:
+def _cfg(policy: dict, cost_multiplier: float = 1.0) -> BacktestConfig:
     c = dict(policy["costs"])
-    if slippage_bps is not None:
-        c["slippage_bps"] = slippage_bps
+    c["commission_bps"] = float(c["commission_bps"]) * cost_multiplier
+    c["slippage_bps"] = float(c["slippage_bps"]) * cost_multiplier
     return BacktestConfig(initial_cash=float(policy["initial_cash"]), costs=CostModel(**c))
 
 
@@ -270,13 +270,14 @@ def validate(make: StrategyFactory, params: dict, data: MarketData, policy_hash:
         if v == "PASS":
             g4p = policy["gate4_partial"]
             g4 = []
-            stress = run_backtest(make(**params), data, _cfg(policy, g4p["stress_slippage_bps"]))
-            stress_b = run_backtest(BuyAndHold(policy["benchmark_symbol"]), data, _cfg(policy, g4p["stress_slippage_bps"]))
+            mult = float(g4p["stress_cost_multiplier"])
+            stress = run_backtest(make(**params), data, _cfg(policy, mult))
+            stress_b = run_backtest(BuyAndHold(policy["benchmark_symbol"]), data, _cfg(policy, mult))
             st = _compare(stress.equity, stress_b.equity, rf, stress.trades, hs, he)
             st.pop("_returns")
-            metrics["gate4_cost_stress"] = {"slippage_bps": g4p["stress_slippage_bps"], "sharpe_diff": st["sharpe_diff"]}
+            metrics["gate4_cost_stress"] = {"cost_multiplier": mult, "sharpe_diff": st["sharpe_diff"]}
             if st["sharpe_diff"] < g4p["stress_min_sharpe_diff"]:
-                g4.append(f"sharpe_diff {st['sharpe_diff']:.3f} at {g4p['stress_slippage_bps']}bp slippage")
+                g4.append(f"sharpe_diff {st['sharpe_diff']:.3f} at {mult:g}x costs")
             neigh = {}
             for name, values in g4p["neighbor_params"].items():
                 for val in values:

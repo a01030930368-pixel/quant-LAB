@@ -1,6 +1,8 @@
 # Baseline strategy as a QUANT LAB Strategy Spec v1 (03 v2.0.0 §4.2).
 # Same rule as src/quantlab/strategies/trend_timing.py; tests check that both
 # produce identical target weights on every session.
+# Purpose: verify the app end to end with a simple, well-documented rule (04 Phase 3).
+# It is NOT a research candidate: the user excludes index-tracking/momentum strategies.
 spec_version: 1
 strategy:
   id: TT-SPY-SMA
@@ -40,6 +42,6 @@ execution:
 parameters:
   lookback_months: {default: 10, search: [6, 8, 10, 12, 14]}
 benchmark: SPY_buy_and_hold
-costs: {one_way_bps: 5}
+costs: {one_way_bps: 30}   # informational; the validation policy's costs are binding
 validation:
   policy: trend_timing_v1
