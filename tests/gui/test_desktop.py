@@ -23,6 +23,7 @@ def win(qtbot, tmp_path):
 
 
 def test_six_screens(win):
+    assert win.version_label.text() == "개발 버전"  # a frozen build shows its release tag here
     assert [win.tabs.tabText(i) for i in range(win.tabs.count())] == ["데이터", "전략", "실험", "검증", "결과", "기록"]
 
 

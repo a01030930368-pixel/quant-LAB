@@ -750,9 +750,18 @@ class MainWindow(QMainWindow):
         sl.addStretch(1)
         from quantlab.core.app_info import build_label
 
-        folder = QLabel(f"{build_label()}\n\n작업 폴더\n{lab.ws.root}")
+        # one line per label: a wrapped multi-line label here was clipped on Windows (version line hidden)
+        self.version_label = QLabel(build_label())
+        self.version_label.setObjectName("muted")
+        sl.addWidget(self.version_label)
+        sl.addSpacing(8)
+        head = QLabel("작업 폴더")
+        head.setObjectName("muted")
+        sl.addWidget(head)
+        folder = QLabel()
         folder.setObjectName("muted")
-        folder.setWordWrap(True)
+        folder.setToolTip(str(lab.ws.root))
+        folder.setText(folder.fontMetrics().elidedText(str(lab.ws.root), Qt.ElideMiddle, 168))
         sl.addWidget(folder)
 
         body = QWidget()
