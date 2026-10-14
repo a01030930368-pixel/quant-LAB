@@ -1,0 +1,135 @@
+# Third study (plan v0.3, after N4X-INTL-1X lost to costs on 2026-10-14).
+# Lesson from N4X: the rebound is real before costs (+0.34% per trade, t 5.2 on TRAIN+VALIDATION)
+# but 0.6% round trip eats it. At 0.25% one-way only rarer, larger signals can survive: a trade
+# needs about +1.2% before costs to stay positive at twice the cost (Gate 4).
+# So: buy only DEEP oversold days (20-day Bollinger z below -2.5 or -3), keep the 200-day trend
+# filter, and hold until price is back at its 20-day average (up to 10 or 20 sessions).
+# One leg per country ETF; each open leg gets 1/5 of equity, set once at entry (slots sizing).
+# Search space (4 settings) and Gate 4 neighbours are fixed here, before any run of this spec.
+# Derived from viewing N4X's TRAIN+VALIDATION results only; the 2017+ holdout of these ETFs has
+# not been opened by any strategy.
+spec_version: 1
+strategy:
+  id: N5X-INTL-DEEP
+  version: 1.0.0
+  name: 해외 선진국 지수 ETF 깊은 과매도 반등 (드문 신호, 최대 4주 보유)
+  type: mean_reversion
+  author: claude
+  parent: N4X-INTL-1X@1.0.0
+  derived_after_holdout_view: false
+hypothesis:
+  class: data_mining
+  economic_rationale: >
+    Short-term overreaction in broad equity indices after sharp declines (Connors & Alvarez 2009):
+    liquidity providers are paid to absorb forced selling, so prices partly revert. The reversion
+    should be larger after deeper, rarer declines; N4X showed a real but small gross edge across
+    all oversold days, too small for a 0.6% round trip.
+  expected_risks:
+    - too few trades for a reliable test (deep signals inside an uptrend are rare)
+    - deep declines that keep falling (crash onsets) give the largest losses
+    - legs are correlated: several countries signal on the same global sell-off day
+    - selected after seeing N4X's TRAIN+VALIDATION results (counted as further trials)
+  falsification: >
+    On the holdout (2017-01 onward), net Sharpe not above EFA buy-and-hold with block-bootstrap
+    p < 0.10, or max drawdown above 80% of EFA's. Trade-level: gross mean per trade below +1.2%.
+universe:
+  market: US_ETF
+  symbols: [EWJ, EWG, EWU, EWC, EWA, EWQ, EWL, EWH, EWS, EFA, BIL]
+  frequency: daily
+rules:
+  kind: declarative
+  entry_exit:
+    sizing: {slots: 5}
+    legs:
+      - name: Z-EWJ
+        trade: EWJ
+        entry:
+          - {indicator: bollinger_z, days: 20, op: "<", value: "$z_entry"}
+          - {indicator: close_vs_sma, days: 200, op: ">", value: 0}
+        exit:
+          any:
+            - {indicator: close_vs_sma, days: 20, op: ">", value: 0}
+          max_hold_days: "$max_hold"
+      - name: Z-EWG
+        trade: EWG
+        entry:
+          - {indicator: bollinger_z, days: 20, op: "<", value: "$z_entry"}
+          - {indicator: close_vs_sma, days: 200, op: ">", value: 0}
+        exit:
+          any:
+            - {indicator: close_vs_sma, days: 20, op: ">", value: 0}
+          max_hold_days: "$max_hold"
+      - name: Z-EWU
+        trade: EWU
+        entry:
+          - {indicator: bollinger_z, days: 20, op: "<", value: "$z_entry"}
+          - {indicator: close_vs_sma, days: 200, op: ">", value: 0}
+        exit:
+          any:
+            - {indicator: close_vs_sma, days: 20, op: ">", value: 0}
+          max_hold_days: "$max_hold"
+      - name: Z-EWC
+        trade: EWC
+        entry:
+          - {indicator: bollinger_z, days: 20, op: "<", value: "$z_entry"}
+          - {indicator: close_vs_sma, days: 200, op: ">", value: 0}
+        exit:
+          any:
+            - {indicator: close_vs_sma, days: 20, op: ">", value: 0}
+          max_hold_days: "$max_hold"
+      - name: Z-EWA
+        trade: EWA
+        entry:
+          - {indicator: bollinger_z, days: 20, op: "<", value: "$z_entry"}
+          - {indicator: close_vs_sma, days: 200, op: ">", value: 0}
+        exit:
+          any:
+            - {indicator: close_vs_sma, days: 20, op: ">", value: 0}
+          max_hold_days: "$max_hold"
+      - name: Z-EWQ
+        trade: EWQ
+        entry:
+          - {indicator: bollinger_z, days: 20, op: "<", value: "$z_entry"}
+          - {indicator: close_vs_sma, days: 200, op: ">", value: 0}
+        exit:
+          any:
+            - {indicator: close_vs_sma, days: 20, op: ">", value: 0}
+          max_hold_days: "$max_hold"
+      - name: Z-EWL
+        trade: EWL
+        entry:
+          - {indicator: bollinger_z, days: 20, op: "<", value: "$z_entry"}
+          - {indicator: close_vs_sma, days: 200, op: ">", value: 0}
+        exit:
+          any:
+            - {indicator: close_vs_sma, days: 20, op: ">", value: 0}
+          max_hold_days: "$max_hold"
+      - name: Z-EWH
+        trade: EWH
+        entry:
+          - {indicator: bollinger_z, days: 20, op: "<", value: "$z_entry"}
+          - {indicator: close_vs_sma, days: 200, op: ">", value: 0}
+        exit:
+          any:
+            - {indicator: close_vs_sma, days: 20, op: ">", value: 0}
+          max_hold_days: "$max_hold"
+      - name: Z-EWS
+        trade: EWS
+        entry:
+          - {indicator: bollinger_z, days: 20, op: "<", value: "$z_entry"}
+          - {indicator: close_vs_sma, days: 200, op: ">", value: 0}
+        exit:
+          any:
+            - {indicator: close_vs_sma, days: 20, op: ">", value: 0}
+          max_hold_days: "$max_hold"
+execution:
+  signal_time: close
+  fill: next_open
+  rebalance: daily
+parameters:
+  z_entry: {default: -2.5, search: [-2.5, -3.0]}
+  max_hold: {default: 20, search: [10, 20]}
+benchmark: EFA_buy_and_hold
+costs: {one_way_bps: 30}   # informational; the validation policy's costs are binding
+validation:
+  policy: oversold_intl_deep_v1

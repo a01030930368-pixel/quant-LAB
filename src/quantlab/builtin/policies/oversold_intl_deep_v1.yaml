@@ -1,0 +1,45 @@
+# Validation policy for N5X-INTL-DEEP (deep-oversold rebound on developed-market country ETFs).
+# Written 2026-10-14 after N4X-INTL-1X's TRAIN+VALIDATION run; the 2017+ holdout of these
+# symbols is still unopened. Splits, gates and costs are copied from oversold_intl_v1 unchanged;
+# only the family and the Gate 4 neighbours differ.
+# Frozen: the registry stores its hash; changing anything requires version: 2.
+policy_id: oversold_intl_deep
+version: 1
+strategy_family: N5X-INTL-DEEP
+universe: [EWJ, EWG, EWU, EWC, EWA, EWQ, EWL, EWH, EWS, EFA, BIL]
+benchmark_symbol: EFA          # developed ex-US index, buy-and-hold through the same engine and costs
+risk_free_symbol: BIL
+initial_cash: 100000
+
+splits:                         # fixed before any data; BIL (risk-free proxy) starts 2007-05-30
+  train: ["2007-06-01", "2012-12-31"]
+  validation: ["2013-01-01", "2016-12-31"]
+  holdout: ["2017-01-01", null]
+  forward_holdout_start: "2026-10-15"
+
+costs:
+  commission_bps: 25.0          # user's standing rule (Kiwoom 0.25% one-way)
+  slippage_bps: 5.0
+  fixed_fee: 0.0
+
+gate1:
+  leak_test_cutpoints: 5
+  leak_test_seed: 20261014
+
+gate2:
+  min_sharpe_diff: -0.10
+  max_mdd_ratio: 0.90
+  rule: "PASS if sharpe_diff >= min_sharpe_diff OR mdd_ratio <= max_mdd_ratio, else FAIL"
+
+gate3:
+  min_sharpe_diff: 0.0
+  bootstrap: {block: 63, n_boot: 10000, seed: 20261014, max_p_value: 0.10}
+  max_mdd_ratio: 0.80
+  min_position_changes: 6
+  min_sessions: 504
+
+gate4_partial:
+  stress_cost_multiplier: 2.0
+  stress_min_sharpe_diff: 0.0
+  neighbor_params: {z_entry: [-2.25, -2.75], max_hold: [15, 25]}
+  neighbor_min_sharpe_diff: 0.0

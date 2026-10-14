@@ -160,3 +160,12 @@ of equity and leaves the other holdings untouched when a leg opens or closes, as
 trader would. Mechanism: strategies may return `PartialWeights` (only listed symbols are
 re-targeted); a plain dict still means "every symbol". Experiments run with slots sizing
 before this change will not reproduce bit-for-bit under the new code; none were recorded.
+
+## D-019 · 2026-10-14 · Third study: deep-oversold only, rarer and longer
+N4X-INTL-1X lost to costs (D-018 context): its gross edge was real but +0.34% per trade. The user
+chose (decision card) to test only deep declines on the same country ETFs: 20-day Bollinger z
+below -2.5 or -3 with the 200-day trend filter, exit back at the 20-day average or after 10/20
+sessions, slots sizing 1/5. The 4-setting search space and the Gate 4 neighbours are fixed in the
+spec and policy `oversold_intl_deep_v1` (splits, gates and costs copied from oversold_intl_v1)
+before any run. Chosen after seeing N4X's TRAIN+VALIDATION results only; the 2017+ holdout of
+these ETFs remains unopened. Pass bar per trade: +1.2% gross (survives Gate 4's 2x cost).
