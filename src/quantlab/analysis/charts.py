@@ -9,10 +9,14 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 from matplotlib.figure import Figure
+from matplotlib.ticker import FuncFormatter, MaxNLocator, NullLocator
 
-STRATEGY = "#2a6fdb"
-BENCHMARK = "#8a8f98"
-HOLDOUT = "#f2c94c"
+STRATEGY = "#3182F6"
+BENCHMARK = "#B0B8C1"
+HOLDOUT = "#FFD158"
+INK = "#4E5968"
+EN = {"strategy": "strategy", "benchmark": "benchmark", "holdout": "final holdout"}
+KO = {"strategy": "전략", "benchmark": "벤치마크", "holdout": "최종 평가 구간"}
 
 
 def _fig(w=8.0, h=3.6) -> Figure:
@@ -20,30 +24,45 @@ def _fig(w=8.0, h=3.6) -> Figure:
     return fig
 
 
-def equity(eq: pd.DataFrame, holdout_start=None, title="Cumulative growth (start = 1)") -> Figure:
+def _clean(ax) -> None:
+    """Quiet axes: no box, light grid, gray tick labels."""
+    for side in ("top", "right", "left"):
+        ax.spines[side].set_visible(False)
+    ax.spines["bottom"].set_color("#E5E8EB")
+    ax.tick_params(colors=INK, labelsize=9, length=0)
+    ax.grid(axis="y", color="#F2F4F6", lw=1)
+    ax.set_axisbelow(True)
+
+
+def equity(eq: pd.DataFrame, holdout_start=None, title="Cumulative return (log scale)", names=EN) -> Figure:
     fig = _fig()
     ax = fig.add_subplot()
     norm = eq / eq.iloc[0]
-    ax.plot(norm.index, norm["strategy"], color=STRATEGY, lw=1.6, label="strategy")
-    ax.plot(norm.index, norm["benchmark"], color=BENCHMARK, lw=1.2, label="benchmark")
+    ax.plot(norm.index, norm["benchmark"], color=BENCHMARK, lw=1.2, label=names["benchmark"])
+    ax.plot(norm.index, norm["strategy"], color=STRATEGY, lw=1.8, label=names["strategy"])
     if holdout_start is not None:
-        ax.axvspan(pd.Timestamp(holdout_start), norm.index[-1], color=HOLDOUT, alpha=0.18, lw=0, label="final holdout")
+        ax.axvspan(pd.Timestamp(holdout_start), norm.index[-1], color=HOLDOUT, alpha=0.18, lw=0, label=names["holdout"])
     ax.set_yscale("log")
-    ax.set_title(title, loc="left", fontsize=11)
-    ax.grid(alpha=0.25)
+    ax.yaxis.set_major_locator(MaxNLocator(6))
+    ax.yaxis.set_minor_locator(NullLocator())
+    ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: f"{(y - 1) * 100:+.0f}%"))
+    if title:
+        ax.set_title(title, loc="left", fontsize=11)
+    _clean(ax)
     ax.legend(frameon=False, fontsize=9)
     return fig
 
 
-def drawdown(eq: pd.DataFrame, title="Drawdown") -> Figure:
+def drawdown(eq: pd.DataFrame, title="Drawdown", names=EN) -> Figure:
     fig = _fig(8.0, 2.6)
     ax = fig.add_subplot()
-    for col, color in (("strategy", STRATEGY), ("benchmark", BENCHMARK)):
+    for col, color in (("benchmark", BENCHMARK), ("strategy", STRATEGY)):
         dd = eq[col] / eq[col].cummax() - 1
-        ax.plot(dd.index, dd * 100, color=color, lw=1.2, label=col)
-    ax.set_ylabel("%")
-    ax.set_title(title, loc="left", fontsize=11)
-    ax.grid(alpha=0.25)
+        ax.plot(dd.index, dd * 100, color=color, lw=1.2, label=names[col])
+    ax.yaxis.set_major_formatter(FuncFormatter(lambda y, _: f"{y:.0f}%"))
+    if title:
+        ax.set_title(title, loc="left", fontsize=11)
+    _clean(ax)
     ax.legend(frameon=False, fontsize=9)
     return fig
 
@@ -59,14 +78,18 @@ def monthly_returns(eq: pd.Series, title="Monthly returns (strategy, %)") -> Fig
     fig = _fig(8.0, max(2.4, 0.28 * len(tab) + 1))
     ax = fig.add_subplot()
     lim = np.nanmax(np.abs(tab.values)) if tab.size else 1
-    im = ax.imshow(tab.values, cmap="RdBu", vmin=-lim, vmax=lim, aspect="auto")
+    im = ax.imshow(tab.values, cmap="RdBu_r", vmin=-lim, vmax=lim, aspect="auto")
     ax.set_xticks(range(len(tab.columns)), [str(c) for c in tab.columns])
     ax.set_yticks(range(len(tab.index)), [str(i) for i in tab.index])
     for (i, j), v in np.ndenumerate(tab.values):
         if np.isfinite(v):
             ax.text(j, i, f"{v:.1f}", ha="center", va="center", fontsize=7)
     fig.colorbar(im, ax=ax, shrink=0.8)
-    ax.set_title(title, loc="left", fontsize=11)
+    ax.tick_params(colors=INK, labelsize=8, length=0)
+    for side in ax.spines.values():
+        side.set_visible(False)
+    if title:
+        ax.set_title(title, loc="left", fontsize=11)
     return fig
 
 
@@ -83,7 +106,7 @@ def parameter_sensitivity(rows: list[dict], metric="sharpe_diff", title=None) ->
         ax.plot(np.array(xs)[order], np.array([r[metric] for r in done])[order], marker="o", color=STRATEGY)
         ax.axhline(0, color=BENCHMARK, lw=0.8)
         ax.set_xlabel(names[0])
-        ax.grid(alpha=0.25)
+        _clean(ax)
     elif len(names) == 2:
         df = pd.DataFrame([{**r["params"], metric: r[metric]} for r in done]).pivot(index=names[0], columns=names[1],
                                                                                    values=metric)

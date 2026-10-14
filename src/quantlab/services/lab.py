@@ -206,6 +206,70 @@ class Lab:
             self._save_artifacts(out.experiment_id, out.results["strategy"], out.results["benchmark"])
         return out
 
+    # --- one-click flows (desktop home screen) ------------------------------------------
+    def has_api_key(self) -> bool:
+        return providers.get_api_key("tiingo") is not None
+
+    def strategy_files(self) -> list[Path]:
+        """Spec files the user can run: bundled examples plus every imported spec (latest copy per id@version)."""
+        found: dict[str, Path] = {}
+        for p in sorted(self.ws.path("examples").glob("*.qls.yaml")) + sorted(self.ws.path("strategies").glob("*/*.qls.yaml")):
+            try:
+                spec = yaml.safe_load(p.read_text(encoding="utf-8"))
+                found.setdefault(f"{spec['strategy']['id']}@{spec['strategy']['version']}", p)
+            except Exception:  # an unreadable file is shown nowhere rather than crashing the list
+                continue
+        return list(found.values())
+
+    def ensure_dataset(self, symbols: list[str], start: str, say=None) -> str:
+        """Dataset with today's data for `symbols`: fetch what is missing or not refreshed today
+        (when a key is stored), then build. Without a key, existing data (e.g. CSV) is used as is."""
+        from datetime import datetime, timezone
+
+        say = say or (lambda s: None)
+        today = datetime.now(timezone.utc).strftime("%Y%m%d")
+        key = self.has_api_key()
+        for s in symbols:
+            recs = self.data.raw_records(s)
+            fresh = recs and recs[-1]["fetched_at"][:8] >= today
+            if fresh or (recs and not key):
+                continue
+            if not key:
+                raise RuntimeError(f"{s} 가격 자료가 없습니다. 먼저 Tiingo API 키를 저장하세요.")
+            say(f"{s} 가격 받는 중")
+            self.fetch([s], start)
+        say("데이터셋 만드는 중")
+        version, manifest = self.build_dataset(symbols)
+        if manifest["qc_fatal"]:
+            say("품질 검사 치명 항목이 있습니다. 결과는 INVALID로 처리됩니다.")
+        return version
+
+    def quick_backtest(self, spec_path: str | Path, say=None) -> BacktestSummary:
+        """Import (or reuse) a spec, prepare its data, run an exploratory backtest with defaults."""
+        say = say or (lambda s: None)
+        say("전략 확인 중")
+        imp = self.import_strategy(spec_path)
+        if imp.state == "IDEA" and imp.problems:
+            raise RuntimeError("전략 검사를 통과하지 못했습니다: " + "; ".join(imp.problems))
+        _, policy = self.policy_for(imp.loaded)
+        version = self.ensure_dataset(imp.loaded.spec["universe"]["symbols"], policy["splits"]["train"][0], say)
+        say("백테스트 실행 중")
+        return self.backtest(imp.strategy_hash, version)
+
+    def quick_final(self, spec_path: str | Path, say=None) -> ValidationOutcome:
+        """Confirm the default parameters (unless already confirmed) and run the one final evaluation."""
+        say = say or (lambda s: None)
+        imp = self.import_strategy(spec_path)
+        _, policy = self.policy_for(imp.loaded)
+        version = self.ensure_dataset(imp.loaded.spec["universe"]["symbols"], policy["splits"]["train"][0], say)
+        if self.registry.confirmation(imp.strategy_hash) is None:
+            self.confirm_candidate(imp.strategy_hash, note="desktop one-click")
+        say("최종 평가 실행 중 (보류 구간 1회 열람)")
+        return self.final_evaluation(imp.strategy_hash, version)
+
+    def holdout_reads(self, strategy_id: str) -> int:
+        return sum(1 for r in self.registry.holdout_ledger() if r["strategy_family"] == strategy_id)
+
     # --- results -------------------------------------------------------------------
     def write_report(self, experiment_id: str) -> Path:
         from quantlab.analysis.report import write_report

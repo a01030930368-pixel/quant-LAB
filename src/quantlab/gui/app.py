@@ -80,6 +80,9 @@ def main(argv: list[str] | None = None) -> int:
 
     app = QApplication(argv)
     app.setApplicationName("QUANT LAB")
+    from quantlab.gui import theme
+
+    theme.apply(app)
     _show_uncaught_errors()
     settings = QSettings("QuantLab", "QuantLab")
     ws = choose_workspace(settings)

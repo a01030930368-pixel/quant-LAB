@@ -16,9 +16,9 @@ import pandas as pd
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QDateEdit, QFileDialog, QFormLayout, QGroupBox,
+from PySide6.QtWidgets import (QAbstractItemView, QButtonGroup, QComboBox, QDateEdit, QFileDialog, QFormLayout, QGroupBox,
                                QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QMainWindow, QMessageBox,
-                               QPlainTextEdit, QProgressBar, QPushButton, QSpinBox, QSplitter, QTableWidget,
+                               QPlainTextEdit, QProgressBar, QPushButton, QSpinBox, QSplitter, QStackedWidget, QTableWidget,
                                QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget)
 
 from quantlab.analysis import charts
@@ -38,6 +38,7 @@ class _Signals(QObject):
     done = Signal(object)
     failed = Signal(str)
     progress = Signal(int, int)
+    text = Signal(str)
 
 
 class _Job(QRunnable):
@@ -47,7 +48,11 @@ class _Job(QRunnable):
 
     def run(self) -> None:
         try:
-            out = self.fn(lambda a, b: self.signals.progress.emit(a, b))
+            def prog(a, b):
+                self.signals.progress.emit(a, b)
+
+            prog.say = self.signals.text.emit  # step text for the progress card
+            out = self.fn(prog)
         except Exception as e:  # shown to the user, never swallowed
             self.signals.failed.emit(f"{type(e).__name__}: {e}\n\n{traceback.format_exc(limit=4)}")
         else:
@@ -69,7 +74,8 @@ class Runner(QObject):
         self.last_error: str | None = None
 
     def start(self, label: str, fn: Callable[[Callable[[int, int], None]], Any], on_done: Callable[[Any], None],
-              on_progress: Callable[[int, int], None] | None = None) -> bool:
+              on_progress: Callable[[int, int], None] | None = None,
+              on_text: Callable[[str], None] | None = None) -> bool:
         if self.busy:
             self.message.emit("다른 작업이 진행 중입니다. 끝난 뒤 다시 실행하세요.")
             return False
@@ -95,6 +101,9 @@ class Runner(QObject):
         sig.failed.connect(fail)
         if on_progress:
             sig.progress.connect(on_progress)
+        sig.text.connect(self.message.emit)
+        if on_text:
+            sig.text.connect(on_text)
         job = _Job(fn, sig)
         if self.sync:
             job.run()
@@ -685,12 +694,16 @@ class HistoryScreen(Screen):
 
 # ----------------------------------------------------------------------------- window
 class MainWindow(QMainWindow):
+    """Sidebar + pages. 홈/결과 are the one-click flow; 고급 keeps the six step-by-step screens."""
+
     def __init__(self, lab: Lab, sync: bool = False) -> None:
+        from quantlab.gui.home import HomePage, ResultPage
+
         super().__init__()
         self.lab = lab
         self.runner = Runner(sync)
         self.setWindowTitle(f"QUANT LAB — {lab.ws.root}")
-        self.resize(1200, 820)
+        self.resize(1240, 860)
         self.tabs = QTabWidget()
         self.data = DataScreen(self)
         self.strategies = StrategyScreen(self)
@@ -701,10 +714,70 @@ class MainWindow(QMainWindow):
         self.screens = [self.data, self.strategies, self.experiments, self.validation, self.results, self.history]
         for s, name in zip(self.screens, ("데이터", "전략", "실험", "검증", "결과", "기록")):
             self.tabs.addTab(s, name)
-        self.setCentralWidget(self.tabs)
+        self.home = HomePage(self)
+        self.result = ResultPage(self)
+        advanced = QWidget()
+        advanced.setObjectName("page")
+        al = QVBoxLayout(advanced)
+        al.setContentsMargins(24, 20, 24, 12)
+        hint = QLabel("단계별로 직접 조작하는 화면입니다. 평소에는 홈에서 버튼 하나로 실행하면 됩니다.")
+        hint.setObjectName("muted")
+        al.addWidget(hint)
+        al.addWidget(self.tabs)
+
+        self.stack = QStackedWidget()
+        self.pages = {"홈": self.home, "결과": self.result, "고급": advanced}
+        side = QWidget()
+        side.setObjectName("sidebar")
+        side.setFixedWidth(196)
+        sl = QVBoxLayout(side)
+        sl.setContentsMargins(12, 22, 12, 16)
+        sl.setSpacing(4)
+        logo = QLabel("QUANT LAB")
+        logo.setObjectName("logo")
+        sl.addWidget(logo)
+        self.nav: dict[str, QPushButton] = {}
+        group = QButtonGroup(self)
+        for name, page in self.pages.items():
+            self.stack.addWidget(page)
+            b = QPushButton(name)
+            b.setCheckable(True)
+            b.setCursor(Qt.PointingHandCursor)
+            b.clicked.connect(lambda _=False, n=name: self.go(n))
+            group.addButton(b)
+            sl.addWidget(b)
+            self.nav[name] = b
+        sl.addStretch(1)
+        folder = QLabel(f"작업 폴더\n{lab.ws.root}")
+        folder.setObjectName("muted")
+        folder.setWordWrap(True)
+        sl.addWidget(folder)
+
+        body = QWidget()
+        bl = QHBoxLayout(body)
+        bl.setContentsMargins(0, 0, 0, 0)
+        bl.setSpacing(0)
+        bl.addWidget(side)
+        bl.addWidget(self.stack, 1)
+        self.setCentralWidget(body)
         self.runner.message.connect(self.status)
         self.runner.busy_changed.connect(self._busy)
         self.refresh_all()
+        self.go("홈")
+
+    def go(self, name: str) -> None:
+        self.stack.setCurrentWidget(self.pages[name])
+        self.nav[name].setChecked(True)
+
+    def show_result(self, experiment_id: str) -> None:
+        self.result.select(experiment_id)
+        self.go("결과")
+
+    def ask(self, text: str) -> bool:
+        """A yes/no question; headless tests answer yes."""
+        if self.runner.sync:
+            return True
+        return QMessageBox.question(self, "QUANT LAB", text) == QMessageBox.Yes
 
     def status(self, text: str) -> None:
         self.statusBar().showMessage(text)
@@ -719,10 +792,18 @@ class MainWindow(QMainWindow):
         for s in self.screens:
             for b in s.actions:
                 b.setEnabled(not busy)
+        if not busy:
+            self.home._idle()
+            self.home.refresh()  # restores each card's own enabled state
+        else:
+            for b in self.home.run_buttons:
+                b.setEnabled(False)
 
     def refresh_all(self) -> None:
         for s in self.screens:
             s.refresh()
+        self.home.refresh()
+        self.result.refresh()
 
     def closeEvent(self, ev):  # noqa: N802 (Qt name)
         if self.runner.busy:

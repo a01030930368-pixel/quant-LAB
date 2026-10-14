@@ -88,3 +88,34 @@ def test_dataset_symbols_prefilled_and_builtin_button(win, tmp_path):
     assert set(win.data.ds_symbols.text().split()) == {"SPY", "BIL"}
     [b for b in win.strategies.actions if "기준 전략" in b.text()][0].click()
     assert win.strategies.rows[0]["strategy_id"] == "TT-SPY-SMA"
+
+
+def test_home_one_click_backtest_and_final(win, tmp_path, monkeypatch):
+    """Home: one button runs import + data + backtest and lands on the result page."""
+    monkeypatch.setattr(win.lab, "has_api_key", lambda: False)
+    assert win.stack.currentWidget() is win.home
+    ids = [p.name for p in win.lab.strategy_files()]
+    assert "TT-SPY-SMA.qls.yaml" in ids and len(win.home.cards) == len(ids)
+
+    # no price data and no key: a clear Korean error, nothing recorded
+    tt = next(p for p in win.lab.strategy_files() if p.name == "TT-SPY-SMA.qls.yaml")
+    win.home.run(tt)
+    assert "API 키" in (win.runner.last_error or "")
+    assert not win.home.progress.isVisible()
+    win.runner.last_error = None
+
+    for sym, p in write_synthetic_csvs(tmp_path).items():
+        win.lab.import_csv(sym, p)
+    win.home.run(tt)
+    assert win.runner.last_error is None, win.runner.last_error
+    assert win.stack.currentWidget() is win.result
+    eid = win.result.pick.currentData()
+    assert win.lab.registry.experiment(eid)["kind"] == "exploratory"
+
+    asked = []
+    win.ask = lambda text: asked.append(text) or True
+    win.home.final(tt, "TT-SPY-SMA")
+    assert win.runner.last_error is None, win.runner.last_error
+    assert "최종 평가" in asked[0]
+    formal = [e for e in win.lab.registry.history() if e["kind"] == "formal"]
+    assert len(formal) == 1 and win.result.pick.currentData() == formal[0]["experiment_id"]
