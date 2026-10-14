@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from quantlab.core import app_info
-from quantlab.core.hashing import canonical_json, stable_hash
+from quantlab.core.hashing import canonical_json, restore_numbers, stable_hash
 
 IMMUTABLE = ("hypotheses", "policies", "datasets", "experiments", "verdicts", "holdout_ledger", "state_changes",
              "strategies", "batches", "trial_events", "exports", "confirmations")
@@ -197,7 +197,7 @@ class Registry:
             q += " AND kind=?"
             args.append(kind)
         rows = self.conn.execute(q + " ORDER BY created_at", args)
-        return [dict(r) | {"config": json.loads(r["config"]), "metrics": json.loads(r["metrics"])} for r in rows]
+        return [dict(r) | {"config": json.loads(r["config"]), "metrics": restore_numbers(json.loads(r["metrics"]))} for r in rows]
 
     def state_history(self, strategy_id: str | None = None) -> list[dict]:
         q = "SELECT * FROM state_changes" + (" WHERE strategy_id=?" if strategy_id else "") + " ORDER BY change_id"
@@ -360,7 +360,7 @@ class Registry:
         if row is None:
             raise KeyError(experiment_id)
         d = dict(row)
-        d["config"], d["metrics"] = json.loads(d["config"]), json.loads(d["metrics"])
+        d["config"], d["metrics"] = json.loads(d["config"]), restore_numbers(json.loads(d["metrics"]))
         return d
 
     def verdicts(self, experiment_id: str) -> list[dict]:

@@ -37,6 +37,20 @@ def _normalize(obj: Any) -> Any:
     return obj
 
 
+_SPECIAL = {"NaN": float("nan"), "Inf": float("inf"), "-Inf": float("-inf")}
+
+
+def restore_numbers(obj: Any) -> Any:
+    """Inverse of the NaN/Inf encoding above, for stored metrics read back for display."""
+    if isinstance(obj, dict):
+        return {k: restore_numbers(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [restore_numbers(v) for v in obj]
+    if isinstance(obj, str) and obj in _SPECIAL:
+        return _SPECIAL[obj]
+    return obj
+
+
 def canonical_json(obj: Any) -> str:
     return json.dumps(_normalize(obj), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
