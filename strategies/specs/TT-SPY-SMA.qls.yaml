@@ -1,0 +1,45 @@
+# Baseline strategy as a QUANT LAB Strategy Spec v1 (03 v2.0.0 §4.2).
+# Same rule as src/quantlab/strategies/trend_timing.py; tests check that both
+# produce identical target weights on every session.
+spec_version: 1
+strategy:
+  id: TT-SPY-SMA
+  version: 1.0.0
+  name: SPY 10개월 이동평균 추세 필터
+  type: trend_timing
+  author: claude
+  parent: null
+  derived_after_holdout_view: false
+hypothesis:
+  class: theory
+  economic_rationale: >
+    Time-series momentum in broad equity indices (Faber 2007; Moskowitz, Ooi & Pedersen 2012).
+    Investors under-react to slow-moving information and de-risk late in drawdowns, so prolonged
+    declines tend to persist; stepping aside when price is below its 10-month average should cut
+    deep drawdowns at the cost of whipsaws in choppy markets.
+  expected_risks:
+    - whipsaw losses in range-bound markets
+    - missing sharp V-shaped recoveries (monthly signal lags)
+    - few independent decisions, so low statistical power
+  falsification: >
+    On the holdout, net Sharpe not above SPY buy-and-hold with block-bootstrap p < 0.10,
+    or max drawdown not at most 80% of buy-and-hold's.
+universe:
+  market: US_ETF
+  symbols: [SPY, BIL]
+  frequency: daily
+rules:
+  kind: declarative
+  signal: {indicator: sma, source: SPY.total_return, lookback_months: 10}
+  long: {SPY: 1.0}
+  else: {BIL: 1.0}
+execution:
+  signal_time: close
+  fill: next_open
+  rebalance: monthly
+parameters:
+  lookback_months: {default: 10, search: [6, 8, 10, 12, 14]}
+benchmark: SPY_buy_and_hold
+costs: {one_way_bps: 5}
+validation:
+  policy: trend_timing_v1

@@ -1,7 +1,8 @@
 # Validation policy for the TT-SPY-SMA family (MVP baseline).
 # Written 2026-10-14 BEFORE any market data was downloaded for this project.
 # (strategy_family renamed TREND_TIMING_SMA -> TT-SPY-SMA the same day, before first registration,
-#  to match the spec id in 03 v2.0.0 4.2; no thresholds changed.)
+#  to match the spec id in 03 v2.0.0 4.2, and parameter sma_months -> lookback_months to match the
+#  spec parameter name; no thresholds changed.)
 # Frozen: the registry stores its hash; changing anything requires version: 2,
 # and results under version 1 stay as they are (protocol 제23~24조).
 policy_id: trend_timing
@@ -42,5 +43,5 @@ gate3:                  # independent evaluation on HOLDOUT, net of base costs
 gate4_partial:          # evaluated only if gate 3 passes; failure -> HOLD
   stress_slippage_bps: 25.0
   stress_min_sharpe_diff: 0.0
-  neighbor_params: {sma_months: [8, 12]}
+  neighbor_params: {lookback_months: [8, 12]}
   neighbor_min_sharpe_diff: 0.0

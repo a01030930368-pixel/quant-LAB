@@ -42,6 +42,10 @@ class MarketView:
     def history(self, symbol: str, field: str = "close") -> pd.Series:
         return self._frame(symbol)[field].copy()
 
+    def frame(self, symbol: str) -> pd.DataFrame:
+        """All fields up to and including now (a copy; edits do not reach the data)."""
+        return self._frame(symbol).copy()
+
     def total_return(self, symbol: str) -> pd.Series:
         return total_return_index(self._frame(symbol))
 
@@ -58,6 +62,12 @@ class MarketView:
         if self._t + 1 >= len(cal):
             return True
         return cal[self._t + 1].month != cal[self._t].month
+
+    def is_last_session_of_week(self) -> bool:
+        cal = self._data.calendar
+        if self._t + 1 >= len(cal):
+            return True
+        return cal[self._t + 1].isocalendar()[:2] != cal[self._t].isocalendar()[:2]
 
 
 class Strategy(ABC):

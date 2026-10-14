@@ -23,7 +23,7 @@ POLICY = {
     "gate3": {"min_sharpe_diff": 0.0, "bootstrap": {"block": 63, "n_boot": 2000, "seed": 7, "max_p_value": 0.10},
               "max_mdd_ratio": 0.80, "min_position_changes": 6, "min_sessions": 504},
     "gate4_partial": {"stress_slippage_bps": 25.0, "stress_min_sharpe_diff": 0.0,
-                      "neighbor_params": {"sma_months": [8, 12]}, "neighbor_min_sharpe_diff": 0.0},
+                      "neighbor_params": {"lookback_months": [8, 12]}, "neighbor_min_sharpe_diff": 0.0},
 }
 
 
@@ -32,7 +32,7 @@ class RandomTiming(Strategy):
     strategy_id = "TT-SPY-SMA"
     version = "random"
 
-    def __init__(self, seed=0, sma_months=None, risk="SPY", cash="BIL"):
+    def __init__(self, seed=0, lookback_months=None, risk="SPY", cash="BIL"):
         super().__init__(seed=seed)
         self.rng = np.random.default_rng(seed)
 
@@ -49,7 +49,7 @@ def make_leaky(data):
         strategy_id = "TT-SPY-SMA"
         version = "leaky"
 
-        def __init__(self, sma_months=None, risk="SPY", cash="BIL"):
+        def __init__(self, lookback_months=None, risk="SPY", cash="BIL"):
             super().__init__()
 
         def on_bar(self, view):

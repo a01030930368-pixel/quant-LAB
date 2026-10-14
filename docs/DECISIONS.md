@@ -65,3 +65,19 @@ lineage check: a strategy derived after holdout results were seen, or whose ance
 results were exported, cannot PASS on that holdout. Baseline family renamed TREND_TIMING_SMA →
 TT-SPY-SMA (spec id in 03 §4.2) in the class and policy v1 before the policy was ever registered or
 any data downloaded; thresholds unchanged.
+
+## D-010 · 2026-10-14 · Strategy spec v1 import
+`*.qls.yaml` is parsed with `yaml.safe_load`, schema-checked against every protocol 제3조 item
+(missing → rejected, nothing registered), hashed (canonical JSON of the spec + code bytes, so
+formatting-only YAML edits keep the hash, any content change makes a new one), and registered.
+Same id@version with different content is refused: bump the version. Then a synthetic smoke test
+and leak checks decide RESEARCH vs IDEA. Declarative rules (conditional signal; rank top-N with
+absolute filter) are the default; `close` sources are forward-built split-adjusted prices.
+Python-kind code is statically checked: import allow-list, no I/O/eval/getattr, no private
+attributes (except `__init__`), and **no shared mutable state** (module/class-level values must be
+constants, no global/nonlocal, no mutable defaults). The last rule was added after a control
+strategy stored prices in a module dict during one run and read them in the next: per-run leak
+tests cannot see that. Code runs in-process for now; a worker process with a time limit arrives
+with batch execution (M11). Not a security boundary: users should import code only from sources
+they trust, and the app shows code before import.
+Baseline param renamed sma_months → lookback_months (class, policy v1 before registration).
