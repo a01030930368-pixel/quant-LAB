@@ -120,3 +120,12 @@ keeps a 4-symbol, 6-year run under a second. Reports add descriptive trade-level
 mean per trade, median, mean without the top 10, day-clustered t, CAGR without the best year);
 they are not gate criteria in policy v1. An N4 daily approximation lives in test fixtures only
 to prove the rules can express it; N4 is not registered as a candidate (seen data, 100+ trials).
+
+## D-015 · 2026-10-14 · Desktop screens (PySide6-Essentials)
+Six screens (데이터·전략·실험·검증·결과·기록) call `Lab` only; no verdict logic in the UI. Qt
+comes from PySide6-Essentials (no WebEngine), keeping the packaged app small; reports open in the
+user's browser instead of an embedded view. Long actions run one at a time on a worker thread
+(the SQLite connection allows cross-thread use for that single job; buttons are disabled
+meanwhile). The final evaluation asks for explicit confirmation showing the confirmed parameters
+and the family's previous holdout reads. The first run asks for a work folder (stored in
+QSettings). Engine modules never import Qt (tested in a subprocess).
