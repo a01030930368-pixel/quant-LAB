@@ -427,7 +427,8 @@ class ResultPage(Page):
 
             def show(name):
                 _empty(host)
-                canvas = FigureCanvasQTAgg(figs[name]())
+                with charts.dark():
+                    canvas = FigureCanvasQTAgg(figs[name]())
                 canvas.setMinimumHeight(330)
                 host.addWidget(canvas)
 

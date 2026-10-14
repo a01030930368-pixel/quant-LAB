@@ -475,7 +475,8 @@ class ExperimentScreen(Screen):
             w = self.canvas_box.takeAt(0).widget()
             if w:
                 w.deleteLater()
-        self.canvas_box.addWidget(FigureCanvasQTAgg(charts.parameter_sensitivity(rows)))
+        with charts.dark():
+            self.canvas_box.addWidget(FigureCanvasQTAgg(charts.parameter_sensitivity(rows)))
 
 
 # ----------------------------------------------------------------------------- 4. validation
@@ -626,9 +627,10 @@ class ResultsScreen(Screen):
             return
         policy = self.lab.registry.get_policy(e["validation_policy_version"]) if e.get("validation_policy_version") else {}
         hs = policy.get("splits", {}).get("holdout", [None])[0] if e["kind"] == "formal" else None
-        self.charts.addTab(FigureCanvasQTAgg(charts.equity(eq, hs)), "누적 수익")
-        self.charts.addTab(FigureCanvasQTAgg(charts.drawdown(eq)), "낙폭")
-        self.charts.addTab(FigureCanvasQTAgg(charts.monthly_returns(eq["strategy"])), "월별 수익")
+        with charts.dark():
+            self.charts.addTab(FigureCanvasQTAgg(charts.equity(eq, hs)), "누적 수익")
+            self.charts.addTab(FigureCanvasQTAgg(charts.drawdown(eq)), "낙폭")
+            self.charts.addTab(FigureCanvasQTAgg(charts.monthly_returns(eq["strategy"])), "월별 수익")
 
     def report(self):
         eid = self.exp.currentData()
