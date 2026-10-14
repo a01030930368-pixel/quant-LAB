@@ -19,7 +19,7 @@ def reg(tmp_path):
 
 def _exp(reg, **kw):
     args = dict(kind="formal", strategy_id="S", strategy_version="1", dataset_version="d1",
-                config={"a": 1}, metrics={"sharpe": 0.5}, code_commit="abc")
+                config={"a": 1}, metrics={"sharpe": 0.5})
     args.update(kw)
     return reg.record_experiment(**args)
 
@@ -72,3 +72,44 @@ def test_holdout_ledger_counts_and_state_history(reg):
     assert reg.count_trials("S") == 0
     _exp(reg)
     assert reg.count_trials("S") == 1
+
+
+def test_app_identity_recorded(reg):
+    from quantlab.core import app_info
+    eid = _exp(reg, strategy_hash="h1", spec_version=1, strategy_origin="claude", batch_id=None)
+    e = reg.experiment(eid)
+    assert e["app_version"] == app_info.app_version()
+    assert e["app_code_hash"] == app_info.app_code_hash() and len(e["app_code_hash"]) == 64
+    assert (e["strategy_hash"], e["spec_version"], e["strategy_origin"]) == ("h1", 1, "claude")
+
+
+def test_strategies_lineage_and_holdout_sharing(reg):
+    reg.register_strategy(strategy_hash="a", strategy_id="S", version="1", origin="user", body={})
+    reg.register_strategy(strategy_hash="b", strategy_id="S2", version="1", origin="claude", body={},
+                          parent="S@1", derived_after_holdout_view=True)
+    assert not reg.register_strategy(strategy_hash="a", strategy_id="S", version="1", origin="user", body={})
+    assert [r["strategy_id"] for r in reg.lineage("S2", "1")] == ["S2", "S"]
+    assert not reg.holdout_shared("S")
+    reg.record_export("S", True, "exports/x.zip", ["report.md"])
+    assert reg.holdout_shared("S")
+    with pytest.raises(sqlite3.DatabaseError, match="append-only"):
+        with reg.conn:
+            reg.conn.execute("DELETE FROM exports")
+
+
+def test_trial_events_and_family_trial_count(reg):
+    reg.register_strategy(strategy_hash="a", strategy_id="S", version="1", origin="user", body={})
+    reg.create_batch("B1", "a", "d1", {"grid": [1, 2, 3]})
+    for i in range(3):
+        reg.trial_event("B1", i, "registered", {"p": i})
+    reg.trial_event("B1", 0, "done", experiment_id="E0")
+    reg.trial_event("B1", 1, "failed", detail="boom")
+    assert reg.trial_status("B1") == {0: "done", 1: "failed", 2: "registered"}
+    assert reg.count_trials_for_family("S") == 3
+
+
+def test_workspace_layout(tmp_path):
+    from quantlab.core.workspace import SUBDIRS, Workspace
+    ws = Workspace.open(tmp_path / "QL")
+    assert all((ws.root / s).is_dir() for s in SUBDIRS)
+    assert ws.registry_path.name == "registry.sqlite"

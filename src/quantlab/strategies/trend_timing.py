@@ -12,7 +12,7 @@ from quantlab.strategies.base import MarketView, Strategy
 
 
 class TrendTiming(Strategy):
-    strategy_id = "TREND_TIMING_SMA"
+    strategy_id = "TT-SPY-SMA"
     version = "1.0.0"
 
     def __init__(self, risk: str = "SPY", cash: str = "BIL", sma_months: int = 10) -> None:

@@ -13,7 +13,7 @@ from quantlab.validation.engine import validate
 from synthetic import regime_market
 
 POLICY = {
-    "policy_id": "test_trend", "version": 1, "strategy_family": "TREND_TIMING_SMA",
+    "policy_id": "test_trend", "version": 1, "strategy_family": "TT-SPY-SMA",
     "universe": ["SPY", "BIL"], "benchmark_symbol": "SPY", "risk_free_symbol": "BIL", "initial_cash": 100000,
     "splits": {"train": ["2000-01-03", "2009-12-31"], "validation": ["2010-01-01", "2015-12-31"],
                "holdout": ["2016-01-01", None]},
@@ -29,7 +29,7 @@ POLICY = {
 
 class RandomTiming(Strategy):
     """No edge: coin-flip risk-on/off each month. Same family id so the same policy applies."""
-    strategy_id = "TREND_TIMING_SMA"
+    strategy_id = "TT-SPY-SMA"
     version = "random"
 
     def __init__(self, seed=0, sma_months=None, risk="SPY", cash="BIL"):
@@ -46,7 +46,7 @@ class RandomTiming(Strategy):
 def make_leaky(data):
     class Leaky(Strategy):
         """Reads next month's return from the full dataset captured in a closure."""
-        strategy_id = "TREND_TIMING_SMA"
+        strategy_id = "TT-SPY-SMA"
         version = "leaky"
 
         def __init__(self, sma_months=None, risk="SPY", cash="BIL"):
@@ -64,7 +64,7 @@ def make_leaky(data):
 
 class PeeksPrivateData(Strategy):
     """Bypasses the view through its private attribute; caught by the perturbation test."""
-    strategy_id = "TREND_TIMING_SMA"
+    strategy_id = "TT-SPY-SMA"
     version = "peek"
 
     def on_bar(self, view):
@@ -92,20 +92,20 @@ def reg(tmp_path):
 
 def run(reg, make, data, policy=POLICY, params=None):
     h = reg.register_policy(policy)
-    return validate(make, params or {}, data, h, reg, dataset_version="synthetic", code_commit="test")
+    return validate(make, params or {}, data, h, reg, dataset_version="synthetic")
 
 
 def test_real_edge_passes():
     reg = Registry(":memory:")
     out = run(reg, TrendTiming, regime_market(0))
     assert out.overall == "PASS", [(g.gate, g.verdict, g.reasons) for g in out.gates]
-    assert reg.current_state("TREND_TIMING_SMA") == "VALIDATION"
+    assert reg.current_state("TT-SPY-SMA") == "VALIDATION"
 
 
 def test_no_edge_fails(reg):
     out = run(reg, RandomTiming, regime_market(0), params={"seed": 3})
     assert out.overall == "FAIL", [(g.gate, g.verdict, g.reasons) for g in out.gates]
-    assert reg.current_state("TREND_TIMING_SMA") == "REJECTED"
+    assert reg.current_state("TT-SPY-SMA") == "REJECTED"
 
 
 def test_lookahead_is_invalid_and_does_not_touch_holdout(reg):
@@ -113,8 +113,8 @@ def test_lookahead_is_invalid_and_does_not_touch_holdout(reg):
     out = run(reg, make_leaky(data), data)
     assert out.overall == "INVALID"
     assert "outside MarketView" in " ".join(out.gates[0].reasons)
-    assert reg.holdout_accesses("TREND_TIMING_SMA", reg.register_policy(POLICY)) == 0
-    assert reg.current_state("TREND_TIMING_SMA") is None  # INVALID is not a strategy failure
+    assert reg.holdout_accesses("TT-SPY-SMA", reg.register_policy(POLICY)) == 0
+    assert reg.current_state("TT-SPY-SMA") is None  # INVALID is not a strategy failure
 
 
 def test_second_holdout_read_cannot_pass(reg):
@@ -137,7 +137,7 @@ def test_insufficient_evidence_holds(reg):
 
 def test_qc_fatal_is_invalid(reg):
     h = reg.register_policy(POLICY)
-    out = validate(TrendTiming, {}, regime_market(0), h, reg, dataset_version="synthetic", code_commit="test",
+    out = validate(TrendTiming, {}, regime_market(0), h, reg, dataset_version="synthetic",
                    qc_fatal=["duplicate timestamps in SPY"])
     assert out.overall == "INVALID"
 
@@ -147,3 +147,11 @@ def test_policy_mismatch_rejected(reg):
         strategy_id = "OTHER"
     with pytest.raises(ValueError):
         run(reg, Other, regime_market(0))
+
+
+def test_derived_after_holdout_view_cannot_pass(reg):
+    reg.register_strategy(strategy_hash="h", strategy_id="TT-SPY-SMA", version="1.0.0", origin="claude",
+                          body={}, derived_after_holdout_view=True)
+    out = run(reg, TrendTiming, regime_market(0))
+    assert out.overall == "HOLD"
+    assert any("derived after holdout" in r for g in out.gates for r in g.reasons)

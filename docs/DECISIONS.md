@@ -54,3 +54,14 @@ to contain few bear regimes, trend timing correctly showed no Sharpe advantage, 
 monthly timing rule has low statistical power over one holdout window. Expect HOLD/FAIL on real SPY
 and prefer higher-breadth hypotheses (multi-asset) next. The control test uses seed 0, whose holdout
 contains bear regimes; this choice was made on synthetic data only.
+
+## D-009 · 2026-10-14 · Desktop-app re-architecture (03 v2.0.0): registry fields and naming
+`code_commit` replaced by `app_version` + `app_code_hash` (sha256 over the installed package's .py
+sources, CRLF-normalized, so source checkouts and frozen builds both produce a stable identity).
+Experiments also carry strategy_hash, spec_version, strategy_origin, batch_id, trial_index. New
+append-only tables: strategies (with parent / derived_after_holdout_view lineage), batches,
+trial_events (registered → done/failed/cancelled, status = latest event), exports. Gate 3 adds a
+lineage check: a strategy derived after holdout results were seen, or whose ancestor's holdout
+results were exported, cannot PASS on that holdout. Baseline family renamed TREND_TIMING_SMA →
+TT-SPY-SMA (spec id in 03 §4.2) in the class and policy v1 before the policy was ever registered or
+any data downloaded; thresholds unchanged.

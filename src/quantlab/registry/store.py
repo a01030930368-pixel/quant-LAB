@@ -15,9 +15,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from quantlab.core import app_info
 from quantlab.core.hashing import canonical_json, stable_hash
 
-IMMUTABLE = ("hypotheses", "policies", "datasets", "experiments", "verdicts", "holdout_ledger", "state_changes")
+IMMUTABLE = ("hypotheses", "policies", "datasets", "experiments", "verdicts", "holdout_ledger", "state_changes",
+             "strategies", "batches", "trial_events", "exports")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS hypotheses (
@@ -35,10 +37,16 @@ CREATE TABLE IF NOT EXISTS experiments (
     strategy_id TEXT NOT NULL,
     strategy_version TEXT NOT NULL,
     dataset_version TEXT NOT NULL,
+    strategy_hash TEXT,
+    spec_version INTEGER,
+    strategy_origin TEXT,
     configuration_version TEXT NOT NULL,
     validation_policy_version TEXT,
-    code_commit TEXT NOT NULL,
+    app_version TEXT NOT NULL,
+    app_code_hash TEXT NOT NULL,
     random_seed INTEGER,
+    batch_id TEXT,
+    trial_index INTEGER,
     execution_timestamp TEXT NOT NULL,
     config TEXT NOT NULL,
     metrics TEXT NOT NULL,
@@ -59,6 +67,36 @@ CREATE TABLE IF NOT EXISTS holdout_ledger (
     strategy_config_hash TEXT NOT NULL,
     policy_hash TEXT NOT NULL,
     experiment_id TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS strategies (
+    strategy_hash TEXT PRIMARY KEY,
+    strategy_id TEXT NOT NULL,
+    version TEXT NOT NULL,
+    origin TEXT NOT NULL,
+    spec_version INTEGER,
+    parent TEXT,
+    derived_after_holdout_view INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    body TEXT NOT NULL,
+    UNIQUE(strategy_id, version));
+CREATE TABLE IF NOT EXISTS batches (
+    batch_id TEXT PRIMARY KEY, created_at TEXT NOT NULL, strategy_hash TEXT NOT NULL,
+    dataset_version TEXT NOT NULL, config TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS trial_events (
+    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    batch_id TEXT NOT NULL REFERENCES batches(batch_id),
+    trial_index INTEGER NOT NULL,
+    event TEXT NOT NULL CHECK (event IN ('registered', 'done', 'failed', 'cancelled')),
+    params TEXT,
+    experiment_id TEXT,
+    detail TEXT,
+    created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS exports (
+    export_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,
+    strategy_family TEXT NOT NULL,
+    includes_holdout INTEGER NOT NULL,
+    path TEXT NOT NULL,
+    contents TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS state_changes (
     change_id INTEGER PRIMARY KEY AUTOINCREMENT,
     created_at TEXT NOT NULL,
@@ -138,16 +176,22 @@ class Registry:
 
     # --- experiments ----------------------------------------------------
     def record_experiment(self, *, kind: str, strategy_id: str, strategy_version: str, dataset_version: str,
-                          config: dict, metrics: dict, code_commit: str, hypothesis_id: str | None = None,
+                          config: dict, metrics: dict, hypothesis_id: str | None = None,
                           validation_policy_version: str | None = None, random_seed: int | None = None,
-                          failure_reason: str | None = None, supersedes: str | None = None) -> str:
+                          failure_reason: str | None = None, supersedes: str | None = None,
+                          strategy_hash: str | None = None, spec_version: int | None = None,
+                          strategy_origin: str | None = None, batch_id: str | None = None,
+                          trial_index: int | None = None) -> str:
         ts = _now()
         exp_id = f"EXP-{ts[:10].replace('-', '')}-{uuid.uuid4().hex[:10]}"
         self._insert("experiments", {
             "experiment_id": exp_id, "created_at": ts, "kind": kind, "hypothesis_id": hypothesis_id,
             "strategy_id": strategy_id, "strategy_version": strategy_version,
             "dataset_version": dataset_version, "configuration_version": stable_hash(config),
-            "validation_policy_version": validation_policy_version, "code_commit": code_commit,
+            "validation_policy_version": validation_policy_version,
+            "app_version": app_info.app_version(), "app_code_hash": app_info.app_code_hash(),
+            "strategy_hash": strategy_hash, "spec_version": spec_version, "strategy_origin": strategy_origin,
+            "batch_id": batch_id, "trial_index": trial_index,
             "random_seed": random_seed, "execution_timestamp": ts, "config": canonical_json(config),
             "metrics": canonical_json(metrics), "result_hash": stable_hash(metrics),
             "failure_reason": failure_reason, "supersedes": supersedes,
@@ -167,6 +211,89 @@ class Registry:
         row = self.conn.execute("SELECT to_state FROM state_changes WHERE strategy_id=? ORDER BY change_id DESC LIMIT 1",
                                 (strategy_id,)).fetchone()
         return row["to_state"] if row else None
+
+    # --- strategies, lineage, batches, exports ------------------------------
+    def register_strategy(self, *, strategy_hash: str, strategy_id: str, version: str, origin: str, body: dict,
+                          spec_version: int | None = None, parent: str | None = None,
+                          derived_after_holdout_view: bool = False) -> bool:
+        """Returns False if this exact content is already registered."""
+        if self.conn.execute("SELECT 1 FROM strategies WHERE strategy_hash=?", (strategy_hash,)).fetchone():
+            return False
+        self._insert("strategies", {"strategy_hash": strategy_hash, "strategy_id": strategy_id, "version": version,
+                                    "origin": origin, "spec_version": spec_version, "parent": parent,
+                                    "derived_after_holdout_view": int(derived_after_holdout_view),
+                                    "created_at": _now(), "body": canonical_json(body)})
+        return True
+
+    def strategy(self, strategy_hash: str) -> dict:
+        row = self.conn.execute("SELECT * FROM strategies WHERE strategy_hash=?", (strategy_hash,)).fetchone()
+        if row is None:
+            raise KeyError(strategy_hash)
+        return dict(row) | {"body": json.loads(row["body"])}
+
+    def strategies(self) -> list[dict]:
+        rows = self.conn.execute("SELECT strategy_hash, strategy_id, version, origin, parent, "
+                                 "derived_after_holdout_view, created_at FROM strategies ORDER BY created_at")
+        return [dict(r) for r in rows]
+
+    def lineage(self, strategy_id: str, version: str) -> list[dict]:
+        """The strategy and its ancestors, nearest first (parent is 'ID@version')."""
+        out, seen = [], set()
+        key = (strategy_id, version)
+        while key and key not in seen:
+            seen.add(key)
+            row = self.conn.execute("SELECT * FROM strategies WHERE strategy_id=? AND version=?", key).fetchone()
+            if row is None:
+                break
+            out.append(dict(row))
+            parent = row["parent"]
+            key = tuple(parent.split("@", 1)) if parent and "@" in parent else None
+        return out
+
+    def holdout_shared(self, strategy_family: str) -> bool:
+        row = self.conn.execute("SELECT 1 FROM exports WHERE strategy_family=? AND includes_holdout=1 LIMIT 1",
+                                (strategy_family,)).fetchone()
+        return row is not None
+
+    def record_export(self, strategy_family: str, includes_holdout: bool, path: str, contents: list[str]) -> None:
+        self._insert("exports", {"created_at": _now(), "strategy_family": strategy_family,
+                                 "includes_holdout": int(includes_holdout), "path": path,
+                                 "contents": canonical_json(contents)})
+
+    def create_batch(self, batch_id: str, strategy_hash: str, dataset_version: str, config: dict) -> None:
+        self._insert("batches", {"batch_id": batch_id, "created_at": _now(), "strategy_hash": strategy_hash,
+                                 "dataset_version": dataset_version, "config": canonical_json(config)})
+
+    def batch(self, batch_id: str) -> dict:
+        row = self.conn.execute("SELECT * FROM batches WHERE batch_id=?", (batch_id,)).fetchone()
+        if row is None:
+            raise KeyError(batch_id)
+        return dict(row) | {"config": json.loads(row["config"])}
+
+    def trial_event(self, batch_id: str, trial_index: int, event: str, params: dict | None = None,
+                    experiment_id: str | None = None, detail: str | None = None) -> None:
+        self._insert("trial_events", {"batch_id": batch_id, "trial_index": trial_index, "event": event,
+                                      "params": canonical_json(params) if params is not None else None,
+                                      "experiment_id": experiment_id, "detail": detail, "created_at": _now()})
+
+    def trial_status(self, batch_id: str) -> dict[int, str]:
+        """Latest event per trial index."""
+        rows = self.conn.execute("SELECT trial_index, event FROM trial_events WHERE batch_id=? ORDER BY event_id",
+                                 (batch_id,))
+        status: dict[int, str] = {}
+        for r in rows:
+            status[r["trial_index"]] = r["event"]
+        return status
+
+    def count_trials_for_family(self, strategy_id: str) -> int:
+        """Every registered search trial plus every experiment of the family (DSR trial count)."""
+        n_trials = self.conn.execute(
+            "SELECT COUNT(DISTINCT t.batch_id || ':' || t.trial_index) AS n FROM trial_events t "
+            "JOIN batches b ON b.batch_id=t.batch_id JOIN strategies s ON s.strategy_hash=b.strategy_hash "
+            "WHERE s.strategy_id=? AND t.event='registered'", (strategy_id,)).fetchone()["n"]
+        n_single = self.conn.execute("SELECT COUNT(*) AS n FROM experiments WHERE strategy_id=? AND batch_id IS NULL",
+                                     (strategy_id,)).fetchone()["n"]
+        return int(n_trials) + int(n_single)
 
     # --- holdout ledger -------------------------------------------------
     def holdout_accesses(self, strategy_family: str, policy_hash: str) -> int:

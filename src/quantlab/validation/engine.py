@@ -170,9 +170,23 @@ def leak_test(make: StrategyFactory, params: dict, data: MarketData, cutpoints: 
     return problems
 
 
+def lineage_independence(registry: Registry, strategy_id: str, version: str) -> list[str]:
+    """03 v2.0.0 §4.4: a strategy derived after its line's holdout results were seen or
+    shared cannot use that holdout as independent evidence."""
+    problems = []
+    for row in registry.lineage(strategy_id, version):
+        if row["derived_after_holdout_view"]:
+            problems.append(f"{row['strategy_id']}@{row['version']} was derived after holdout results were seen")
+        if (row["strategy_id"], row["version"]) != (strategy_id, version) and registry.holdout_shared(row["strategy_id"]):
+            problems.append(f"ancestor {row['strategy_id']} holdout results were exported; use the forward holdout")
+    return problems
+
+
 def validate(make: StrategyFactory, params: dict, data: MarketData, policy_hash: str, registry: Registry, *,
-             dataset_version: str, code_commit: str, hypothesis_id: str | None = None,
-             qc_fatal: list[str] | None = None, supersedes: str | None = None) -> ValidationOutcome:
+             dataset_version: str, hypothesis_id: str | None = None,
+             qc_fatal: list[str] | None = None, supersedes: str | None = None,
+             strategy_hash: str | None = None, spec_version: int | None = None,
+             origin: str | None = None) -> ValidationOutcome:
     policy = registry.get_policy(policy_hash)
     family = policy["strategy_family"]
     probe = make(**params)
@@ -229,7 +243,7 @@ def validate(make: StrategyFactory, params: dict, data: MarketData, policy_hash:
         bp = g3p["bootstrap"]
         boot = M.block_bootstrap_sharpe_diff(rs, rb, rf, bp["block"], bp["n_boot"], bp["seed"])
         changes = _position_changes(full_s.signals, hs, he)
-        n_trials = registry.count_trials(family) + 1
+        n_trials = registry.count_trials_for_family(family) + 1
         # DSR needs the cross-trial variance of Sharpe ratios; with a single trial it equals PSR(0).
         # Multi-trial DSR is reported once families run parameter searches (not used for verdicts in v1).
         ho.update({"bootstrap": boot, "position_changes": changes, "prior_holdout_accesses": prior,
@@ -249,6 +263,7 @@ def validate(make: StrategyFactory, params: dict, data: MarketData, policy_hash:
             holds.append(f"holdout has {ho['strategy']['sessions']} sessions (min {g3p['min_sessions']})")
         if prior:
             holds.append(f"holdout already read {prior} time(s) for {family} under this policy; not independent")
+        holds += lineage_independence(registry, probe.strategy_id, probe.version)
         v = "FAIL" if fails else ("HOLD" if holds else "PASS")
         gates.append(GateResult("GATE3", v, fails + holds or ["all pre-registered holdout conditions met"]))
 
@@ -277,8 +292,9 @@ def validate(make: StrategyFactory, params: dict, data: MarketData, policy_hash:
     overall = max((g.verdict for g in gates), key=RANK.__getitem__)
     exp_id = registry.record_experiment(
         kind="formal", strategy_id=family, strategy_version=probe.version, dataset_version=dataset_version,
-        config={"strategy": probe.describe(), "policy_hash": policy_hash}, metrics=metrics, code_commit=code_commit,
+        config={"strategy": probe.describe(), "policy_hash": policy_hash}, metrics=metrics,
         hypothesis_id=hypothesis_id, validation_policy_version=policy_hash,
+        strategy_hash=strategy_hash, spec_version=spec_version, strategy_origin=origin,
         random_seed=policy["gate3"]["bootstrap"]["seed"],
         failure_reason=None if overall == "PASS" else "; ".join(r for g in gates if g.verdict != "PASS" for r in g.reasons),
         supersedes=supersedes)
