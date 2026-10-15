@@ -173,6 +173,7 @@ class AutoPage(Page):
                 self._show(self.lab.auto_search().summary(self.group))
             except Exception as e:  # shown, never swallowed
                 self.step.setText(f"요약을 읽지 못했습니다: {e}")
+                self._buttons()
             return
         if self._reading:
             self._read_again = True
@@ -201,6 +202,7 @@ class AutoPage(Page):
         def failed(text):
             self._read_done(sig)
             self.step.setText(f"요약을 읽지 못했습니다: {text.splitlines()[0]}")
+            self._buttons()
 
         sig.done.connect(arrived)
         sig.failed.connect(failed)
@@ -336,6 +338,7 @@ class AutoPage(Page):
         _keep_awake(False)
         if sig in self._keep:
             self._keep.remove(sig)
+        self._buttons()  # at once: the summary read that follows may fail or take a while
         self.refresh()
 
     def stop(self) -> None:
