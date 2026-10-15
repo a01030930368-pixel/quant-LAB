@@ -299,3 +299,25 @@ def test_group_loads_after_its_spec_got_a_new_version(tmp_path):
         assert len(auto.trials("AUTO-LEV")) == 1
     finally:
         lab.close()
+
+
+def test_near_misses_are_listed_best_first(lab, monkeypatch):
+    """Trials past the four cheap filters that fail at SPY or later are kept for review, best first."""
+    lab.auto.run(GROUP, workers=1, limit=6)
+    monkeypatch.setattr(A, "_STATE", {})  # judge the stored trials afresh with the stubbed filter
+    early = {}
+
+    def judged(m, auto, beat, t_req):
+        k = id(m)
+        early.setdefault(k, ["trades", "spy", "mdd"][len(early) % 3])
+        return early[k]
+
+    monkeypatch.setattr(A, "first_failure", judged)
+    out = lab.auto.summary(GROUP)
+    near = out["near"]
+    by_fail = {f["code"]: f["count"] for f in out["funnel"]}
+    assert len(near) == by_fail["spy"] + by_fail["mdd"] > 0 and by_fail["trades"] > 0
+    assert all(r["fail"] in ("spy", "mdd") and r["rule"] and r["params"] for r in near)
+    assert {r["status"] for r in near} <= {A.FILTER_LABEL["spy"], A.FILTER_LABEL["mdd"]}
+    vals = [r["cagr"] for r in near]
+    assert vals == sorted(vals, reverse=True)
