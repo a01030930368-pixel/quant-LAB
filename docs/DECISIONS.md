@@ -246,3 +246,13 @@ rarely beats an index that is fully invested through a bull market. The user cho
   They trade the same ETFs and so share one holdout: once either has had its final evaluation, the
   other cannot have one (the app refuses).
 - Drawdown, cost, consistency and t filters are unchanged.
+
+## D-023 — Near misses can be reviewed, not promoted (2026-10-15)
+
+The user wanted to look again at the ~8,000 AUTO-LEV combinations that fell short only at the SPY
+Sharpe check.
+- The 자동 탐색 page has a second list, "아깝게 떨어진 전략": trials that cleared trades, gross,
+  both splits and 2x cost but failed the SPY check or a later filter, ordered by the group's
+  `beat_metric`. The page shows the top 500; "CSV로 저장" writes all of them.
+- A near miss can be backtested on TRAIN+VALIDATION like a candidate, but it cannot be sent to the
+  final evaluation: picking the best of thousands that failed would be selection on noise.

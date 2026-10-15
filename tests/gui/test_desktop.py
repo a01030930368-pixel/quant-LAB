@@ -190,3 +190,34 @@ def test_auto_page_unlocks_after_a_failed_run(win, monkeypatch):
     assert all(b.isEnabled() for b in page.seg_buttons.values())
     page.choose("AUTO-LEVP")
     assert page.group == "AUTO-LEVP"
+
+
+def test_auto_page_lists_near_misses_and_saves_them(win, tmp_path, monkeypatch):
+    import csv
+
+    from quantlab.gui import autopage
+
+    win.go("자동 탐색")
+    page = win.auto
+    near = [{"params": {"entry": "rsi2_5", "k": i}, "rule": f"규칙 {i}", "fail": "spy", "status": "SPY 보유보다 낮은 샤프",
+             "n": 50, "gross": 0.02, "net": 0.01, "cagr": 0.05, "sharpe": 1.0 - i / 1000, "mdd": -0.2, "t": 2.0}
+            for i in range(autopage.NEAR_SHOWN + 20)]
+    s = {"group": page.group, "done": 10, "grid": 10, "family_trials": 10, "t_required": 4.0, "beat_metric": "sharpe",
+         "beat_value": 1.2, "pending": 0, "funnel": [], "candidates": [], "near": near, "holdout_reads": 0}
+    page._show(s)
+    assert page.cands.rowCount() == 0
+    page.show_near(True)
+    assert page.cands.rowCount() == autopage.NEAR_SHOWN
+    assert page.cands.item(0, 0).text() == "규칙 0" and page.cands.item(0, 8).text() == "—"
+    assert not page.final_btn.isEnabled() and page.view_btn.isEnabled() and page.csv_btn.isEnabled()
+    assert page._chosen()["rule"] == "규칙 0"
+    page._show(s)  # a refresh keeps the near-miss view
+    assert page.cands.rowCount() == autopage.NEAR_SHOWN
+    out = tmp_path / "near.csv"
+    monkeypatch.setattr(autopage.QFileDialog, "getSaveFileName", lambda *a, **k: (str(out), ""))
+    page.save_near_csv()
+    with open(out, encoding="utf-8-sig") as f:
+        rows = list(csv.reader(f))
+    assert rows[0][0] == "규칙" and len(rows) == len(near) + 1 and rows[1][0] == "규칙 0"
+    page.show_near(False)
+    assert page.cands.rowCount() == 0 and not page.final_btn.isEnabled()

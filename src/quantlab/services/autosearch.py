@@ -60,6 +60,8 @@ FILTERS = [
 ]
 FILTER_LABEL = dict(FILTERS)
 SPY_SHARPE_LABEL = "SPY 보유보다 낮은 샤프 (위험 대비 수익)"
+# the cheap filters; a trial past them counts as a near miss when it fails a later one
+EARLY_FILTERS = ("trades", "gross", "splits", "cost2x")
 
 
 def key(params: dict) -> str:
@@ -407,8 +409,10 @@ class AutoSearch:
         t_req = required_t(n, auto["alpha"])
         metric = auto.get("beat_metric", "cagr")
         beat = self.beat_value(group, metric)
+        spy_label = SPY_SHARPE_LABEL if metric == "sharpe" else FILTER_LABEL["spy"]
         funnel = {code: 0 for code, _ in FILTERS}
         rows = []
+        near = []  # reached the SPY check (cleared trades, gross, splits and 2x cost) but failed there or later
         for v in known.values():
             m = v["metrics"]
             if m is None or beat is None:
@@ -432,7 +436,13 @@ class AutoSearch:
                                  "neighbours": f"{ok}/{len(nbs)}", "status": status or "후보", **m})
             if fail is not None:
                 funnel[fail] += 1
+                if fail not in EARLY_FILTERS:
+                    if "rule" not in v:
+                        v["rule"] = combo.describe(v["params"])
+                    near.append({**m, "params": v["params"], "rule": v["rule"], "fail": fail,
+                                 "status": spy_label if fail == "spy" else FILTER_LABEL[fail]})
         rows.sort(key=lambda r: -(r.get("t") or 0))
+        near.sort(key=lambda r: -math.inf if r.get(metric) is None else -r[metric])
         grid_size = len(self._keyed_order(loaded, policy))
         done = sum(1 for v in known.values() if v["status"] == "done")
         reads = self.holdout_reads(group)
@@ -442,9 +452,9 @@ class AutoSearch:
                 "pending": sum(1 for v in known.values() if v["status"] in ("registered", "cancelled")),
                 "family_trials": n, "t_required": t_req, "beat_symbol": auto["beat_symbol"],
                 "beat_metric": metric, "beat_value": beat, "beat_cagr": self.beat_value(group, "cagr"),
-                "funnel": [{"code": c, "label": SPY_SHARPE_LABEL if c == "spy" and metric == "sharpe" else lbl,
+                "funnel": [{"code": c, "label": spy_label if c == "spy" else lbl,
                             "count": funnel[c]} for c, lbl in FILTERS],
-                "candidates": rows, "holdout_reads": reads}
+                "candidates": rows, "near": near, "holdout_reads": reads}
 
     # --- a candidate -----------------------------------------------------------------
     def open_candidate(self, group: str, params: dict):

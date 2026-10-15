@@ -7,15 +7,31 @@ separate, confirmed action by the user (`quantlab.services.autosearch`).
 
 from __future__ import annotations
 
+import csv
+import json
 import os
 
 from PySide6.QtCore import Qt, QThreadPool, QTimer
-from PySide6.QtWidgets import (QAbstractItemView, QButtonGroup, QCheckBox, QHBoxLayout, QHeaderView, QProgressBar, QPushButton,
+from PySide6.QtWidgets import (QAbstractItemView, QButtonGroup, QCheckBox, QFileDialog, QHBoxLayout, QHeaderView, QProgressBar, QPushButton,
                                QSpinBox, QTableWidget, QVBoxLayout)
 
 from quantlab.gui import theme
 from quantlab.gui.home import Card, KeepColors, Page, button, cell, hline, kpi_strip, label, pane_header, pct
 from quantlab.services.autosearch import GROUPS
+
+NEAR_SHOWN = 500  # near misses listed on the page; the CSV has all of them
+
+
+def write_near_csv(rows: list[dict], path) -> None:
+    """All near misses of a group, best first, for a spreadsheet (UTF-8 with BOM so Excel reads Korean)."""
+    cols = [("규칙", "rule"), ("탈락 이유", "status"), ("샤프", "sharpe"), ("연수익", "cagr"), ("비용 2배 연수익", "cagr_2x"),
+            ("MDD", "mdd"), ("거래", "n"), ("비용 전/거래", "gross"), ("비용 후/거래", "net"), ("t값", "t"),
+            ("TRAIN 수익", "ret_train"), ("VALIDATION 수익", "ret_validation")]
+    with open(path, "w", newline="", encoding="utf-8-sig") as f:
+        w = csv.writer(f)
+        w.writerow([h for h, _ in cols] + ["설정"])
+        for r in rows:
+            w.writerow([r.get(k) for _, k in cols] + [json.dumps(r["params"], ensure_ascii=False, sort_keys=True)])
 
 def _keep_awake(on: bool) -> None:
     """Windows: stop the PC from going to sleep while the search runs (the screen may still turn off)."""
@@ -54,6 +70,7 @@ class AutoPage(Page):
         self.limit: int | None = None  # tests run a few combinations instead of a full run
         self._exhausted: set[str] = set()  # groups whose whole grid has been tried
         self._reading = self._read_again = False  # a summary read is running / another was asked for
+        self.near_mode = False  # the right-hand table lists near misses instead of candidates
 
         head = QHBoxLayout()
         head.addWidget(label("자동 탐색", "h1"))
@@ -121,11 +138,25 @@ class AutoPage(Page):
         cand = Card(14, 6)
         self.cand_head = label("후보", "ph")
         top = QHBoxLayout()
+        self.list_seg = QButtonGroup(self)
+        self.list_buttons = {}
+        for near, text in ((False, "후보"), (True, "아깝게 떨어진 전략")):
+            b = button(text, "seg")
+            b.setCheckable(True)
+            b.clicked.connect(lambda _=False, n=near: self.show_near(n))
+            self.list_seg.addButton(b)
+            top.addWidget(b)
+            self.list_buttons[near] = b
+        self.list_buttons[False].setChecked(True)
+        top.addSpacing(12)
         top.addWidget(self.cand_head)
         top.addStretch()
         self.view_btn = button("백테스트 보기", "secondary", self.view_candidate)
+        self.csv_btn = button("CSV로 저장…", "secondary", self.save_near_csv)
+        self.csv_btn.setVisible(False)
         self.final_btn = button("최종 평가…", "primary", self.final_candidate)
         top.addWidget(self.view_btn)
+        top.addWidget(self.csv_btn)
         top.addWidget(self.final_btn)
         cand.lay.addLayout(top)
         cand.lay.addWidget(hline())
@@ -235,29 +266,66 @@ class AutoPage(Page):
             self.funnel.setItem(i, 0, cell(f["label"], mono=False, align=Qt.AlignLeft))
             self.funnel.setItem(i, 1, cell(f"{f['count']:,}"))
         self.funnel.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        rows = s["candidates"]
+        self._fill_list()
+
+    def _rows(self) -> list[dict]:
+        s = self.summary or {}
+        return (s.get("near") or [])[:NEAR_SHOWN] if self.near_mode else s.get("candidates") or []
+
+    def show_near(self, near: bool) -> None:
+        self.near_mode = near
+        self.list_buttons[near].setChecked(True)
+        self._fill_list()
+
+    def _fill_list(self) -> None:
+        s = self.summary or {}
+        rows = self._rows()
         self.cands.setRowCount(len(rows))
         for i, r in enumerate(rows):
             vals = [cell(r["rule"], mono=False, align=Qt.AlignLeft), cell(f"{r['n']}"), cell(pct(r.get("gross"), True)),
                     cell(pct(r.get("net"), True)), cell(pct(r.get("cagr"), True)),
                     cell(f"{r['sharpe']:.2f}" if r.get("sharpe") is not None else "—"), cell(pct(r.get("mdd"))),
-                    cell(f"{r['t']:.2f}" if r.get("t") is not None else "—"), cell(r["neighbours"]),
+                    cell(f"{r['t']:.2f}" if r.get("t") is not None else "—"), cell(r.get("neighbours", "—")),
                     cell(r["status"], theme.OK if r["status"] == "후보" else theme.ACCENT, mono=False)]
             for j, it in enumerate(vals):
                 self.cands.setItem(i, j, it)
         self.cands.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        self.cand_head.setText(f"후보 {len(rows)}")
-        reads = s["holdout_reads"]
-        self.cand_note.setText(
-            "아직 후보가 없습니다. 탐색을 더 돌리거나 다른 묶음을 시험해 보세요." if not rows else
-            f"이 묶음의 보류 구간은 {'아직 열지 않았습니다' if not reads else f'이미 {reads}번 열었습니다 (다음 최종 평가는 PASS가 될 수 없음)'}. "
-            "최종 평가는 묶음마다 후보 하나만 하는 것이 원칙입니다.")
+        self.csv_btn.setVisible(self.near_mode)
+        self.final_btn.setVisible(not self.near_mode)
+        if self.near_mode:
+            total = len(s.get("near") or [])
+            by = "샤프" if s.get("beat_metric") == "sharpe" else "연수익"
+            self.cand_head.setText(f"{total:,}개" + (f" (위 {NEAR_SHOWN}개 표시)" if total > NEAR_SHOWN else ""))
+            self.cand_note.setText(
+                "아직 없습니다." if not total else
+                f"앞의 네 기준(거래 수·거래당 수익·두 구간 이익·비용 2배)은 통과했지만 SPY 비교나 그 뒤 기준에서 떨어진 조합입니다. "
+                f"{by}이 높은 순서입니다. 아이디어를 얻는 용도로만 보세요. 수천 개 중에 골라내면 운 좋은 조합을 집기 쉬워서, "
+                "여기서는 최종 평가를 할 수 없습니다.")
+        else:
+            reads = s.get("holdout_reads", 0)
+            self.cand_head.setText(f"{len(rows)}개")
+            self.cand_note.setText(
+                "아직 후보가 없습니다. 탐색을 더 돌리거나 다른 묶음을 시험해 보세요." if not rows else
+                f"이 묶음의 보류 구간은 {'아직 열지 않았습니다' if not reads else f'이미 {reads}번 열었습니다 (다음 최종 평가는 PASS가 될 수 없음)'}. "
+                "최종 평가는 묶음마다 후보 하나만 하는 것이 원칙입니다.")
         self._buttons()
+
+    def save_near_csv(self) -> None:
+        rows = (self.summary or {}).get("near") or []
+        if not rows:
+            self.win.notify("저장할 조합이 없습니다.")
+            return
+        default = str(self.lab.ws.root / f"{self.group}_아깝게_떨어진_전략.csv")
+        path, _ = QFileDialog.getSaveFileName(self, "CSV로 저장", default, "CSV (*.csv)")
+        if path:
+            write_near_csv(rows, path)
+            self.win.notify(f"{len(rows):,}개를 저장했습니다: {path}")
 
     def _buttons(self) -> None:
         has = self.cands.rowCount() > 0
         self.view_btn.setEnabled(has and not self.win.runner.busy)
-        self.final_btn.setEnabled(has and not self.win.runner.busy)
+        self.final_btn.setEnabled(has and not self.near_mode and not self.win.runner.busy)
+        self.csv_btn.setEnabled(bool((self.summary or {}).get("near")))
         self.start_btn.setEnabled(not self.running)
         self.stop_btn.setEnabled(self.running)
         for b in self.seg_buttons.values():
@@ -348,7 +416,7 @@ class AutoPage(Page):
     # --- candidates ----------------------------------------------------------------
     def _chosen(self) -> dict | None:
         r = self.cands.currentRow()
-        rows = (self.summary or {}).get("candidates") or []
+        rows = self._rows()
         if not 0 <= r < len(rows):
             r = 0 if rows else -1
         if r < 0:
@@ -369,6 +437,8 @@ class AutoPage(Page):
         self.win.runner.start("후보 백테스트", lambda p: self.lab.auto_search().open_candidate(group, c["params"]), done)
 
     def final_candidate(self) -> None:
+        if self.near_mode:
+            return
         c = self._chosen()
         if not c:
             return
