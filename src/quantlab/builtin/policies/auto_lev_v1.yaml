@@ -1,0 +1,62 @@
+# Validation policy for AUTO-LEV — automatic strategy search on 3x leveraged non-US ETFs (Direxion EDC
+# emerging markets, YINN China large caps, KORU Korea, EURL developed Europe).
+# Written 2026-10-15 before any data for these ETFs was downloaded by the app or seen by Claude.
+# Chosen by the user after all four 1x groups (91,392 combinations) produced no candidate: about two
+# thirds failed the +1.2% gross-per-trade bar, so this group trades instruments that move ~3x as much.
+# The catalog, costs, gates and filters are the same as the 1x groups; only the universe, the splits
+# (the ETFs list 2008-12 .. 2014-01) and the slot count differ.
+# The prior project tested US 3x ETFs (SPXL, TQQQ) only; none of these four.
+# Frozen: the registry stores its hash; changing anything requires version: 2.
+policy_id: auto_lev
+version: 1
+strategy_family: AUTO-LEV
+universe: [EDC, YINN, KORU, EURL, SPY, BIL]
+benchmark_symbol: SPY
+risk_free_symbol: BIL
+initial_cash: 100000
+
+splits:                         # EDC lists 2008-12, YINN 2009-12, KORU 2013-04, EURL 2014-01
+  train: ["2010-01-01", "2015-12-31"]
+  validation: ["2016-01-01", "2019-12-31"]
+  holdout: ["2020-01-01", null]
+  forward_holdout_start: "2026-10-16"
+
+costs:
+  commission_bps: 25.0          # user's standing rule (0.25% one-way)
+  slippage_bps: 5.0
+  fixed_fee: 0.0
+
+gate1:
+  leak_test_cutpoints: 5
+  leak_test_seed: 20261014
+
+gate2:
+  min_sharpe_diff: -0.10
+  max_mdd_ratio: 0.90
+  rule: "PASS if sharpe_diff >= min_sharpe_diff OR mdd_ratio <= max_mdd_ratio, else FAIL"
+
+gate3:
+  min_sharpe_diff: 0.0
+  bootstrap: {block: 63, n_boot: 10000, seed: 20261014, max_p_value: 0.10}
+  max_mdd_ratio: 0.80
+  min_position_changes: 6
+  min_sessions: 504
+
+gate4_partial:
+  stress_cost_multiplier: 2.0
+  stress_min_sharpe_diff: 0.0
+  neighbor_params: {}            # neighbours are checked during the search (TRAIN+VALIDATION), see auto_search
+  neighbor_min_sharpe_diff: 0.0
+
+auto_search:                    # filters of the automatic search (design doc, user-approved 2026-10-14)
+  trials_per_run: 3000
+  order_seed: 20261014          # fixed shuffle of the full grid; each run takes the next untried combinations
+  prior_trials: 0
+  min_trades_train: 40
+  min_trades_validation: 20
+  min_gross_per_trade: 0.012    # twice the 0.6% round trip
+  stress_cost_multiplier: 2.0   # CAGR must stay above 0 at twice the costs
+  max_drawdown_floor: -0.35
+  beat_symbol: SPY              # CAGR above SPY buy-and-hold over the same TRAIN+VALIDATION window
+  alpha: 0.05                   # one-sided; Bonferroni over the family's trial count (incl. prior_trials)
+  neighbour_min_share: 0.5

@@ -27,12 +27,14 @@ def _keep_awake(on: bool) -> None:
     ctypes.windll.kernel32.SetThreadExecutionState(es_continuous | (es_system_required if on else 0))
 
 
-GROUP_NAME = {"AUTO-DEVA": "선진국 A", "AUTO-DEVB": "선진국 B", "AUTO-EM": "신흥국", "AUTO-REAL": "채권·금·원자재·리츠"}
+GROUP_NAME = {"AUTO-DEVA": "선진국 A", "AUTO-DEVB": "선진국 B", "AUTO-EM": "신흥국", "AUTO-REAL": "채권·금·원자재·리츠",
+             "AUTO-LEV": "3배 ETF"}
 GROUP_NOTE = {
     "AUTO-DEVA": "일본·독일·영국·캐나다·호주·프랑스·스위스·홍콩·싱가포르 ETF 9종",
     "AUTO-DEVB": "스웨덴·네덜란드·스페인·이탈리아·벨기에·오스트리아 ETF 6종",
     "AUTO-EM": "브라질·멕시코·대만·한국·남아공·말레이시아·중국 ETF 7종",
     "AUTO-REAL": "미국 장기·중기 국채, 회사채, 금, 은, 원자재, 리츠 ETF 7종",
+    "AUTO-LEV": "신흥국·중국·한국·유럽 3배 레버리지 ETF 4종 (EDC·YINN·KORU·EURL), 2010년부터",
 }
 
 

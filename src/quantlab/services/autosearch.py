@@ -40,7 +40,7 @@ from quantlab.strategies.spec import load_spec
 from quantlab.validation import metrics as M
 from quantlab.validation.engine import BuyAndHold, _cfg, _rf, dev_data
 
-GROUPS = ("AUTO-DEVA", "AUTO-DEVB", "AUTO-EM", "AUTO-REAL")
+GROUPS = ("AUTO-DEVA", "AUTO-DEVB", "AUTO-EM", "AUTO-REAL", "AUTO-LEV")
 
 # filter code -> Korean label, in the order they are checked
 FILTERS = [

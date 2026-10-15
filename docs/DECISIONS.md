@@ -201,3 +201,19 @@ added: MACD and 5/20/60/120-day moving averages as entry signals, "must beat SPY
   records a normal exploratory backtest. The registry uses WAL so the search can write from its own
   connection while the window is in use.
 - Charter/protocol wording for large-scale machine search is pending in the charter thread.
+
+## D-021 · 2026-10-15 · Fifth search group: 3x leveraged non-US ETFs
+All four 1x groups ran to the end on the user's PC (4 x 22,848 combinations) with no candidate.
+The funnels add up exactly per group and spread over several filters, so this is a result, not a
+fault: about 60-64% failed gross >= +1.2% per trade, 30-41% had too few trades, and most of the
+few hundred left fell short of SPY; two (신흥국) reached the t-value filter and failed it. With a
+0.6% round trip, 1x country/bond/commodity ETFs rarely move enough in 2 days to 6 weeks.
+
+The user chose (decision card) a group of instruments that move about three times as much:
+AUTO-LEV, Direxion 3x EDC (emerging markets), YINN (China large caps), KORU (Korea) and EURL
+(developed Europe), policy `auto_lev_v1` fixed before any of their data was downloaded. The prior
+project tested US 3x ETFs (SPXL, TQQQ) only. Same catalog, costs and filters (the +1.2% bar is not
+lowered); 4 slots, one per ETF. The funds list 2008-12 .. 2014-01, so the splits are TRAIN
+2010..2015, VALIDATION 2016..2019, HOLDOUT 2020+; a fund's rows before it lists are empty and
+its rules simply do not trade there. The 1x results do not count as prior trials of this family:
+nothing in the catalog or filters was changed after seeing them, only the universe.

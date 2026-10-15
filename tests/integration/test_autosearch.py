@@ -147,3 +147,28 @@ def test_neighbours_are_one_step_away():
     assert {n["entry"] for n in nbs if n["entry"] != "z20_2.0"} == {"z20_1.5", "z20_2.5"}
     assert {n["max_hold"] for n in nbs if n["max_hold"] != 10} == {5, 20}
     assert len(combo.neighbours(dict(p, entry="low20", max_hold=5))) == 1
+
+
+def test_late_listed_leveraged_group_runs(tmp_path):
+    """AUTO-LEV: the ETFs list between 2008 and 2014; rows before a listing are empty, not an error."""
+    lab = Lab(tmp_path / "QL")
+    try:
+        rng = np.random.default_rng(9)
+        starts = {"EDC": "2008-12-17", "YINN": "2009-12-03", "KORU": "2013-04-11", "EURL": "2014-01-23",
+                  "SPY": "2007-06-01", "BIL": "2007-06-01"}
+        for sym, start in starts.items():
+            sessions = exchange_sessions(start, "2022-12-30")
+            drift, vol = {"BIL": (0.00005, 0.0005), "SPY": (0.0003, 0.011)}.get(sym, (0.0, 0.035))
+            close = 30 * np.exp(np.cumsum(rng.normal(drift, vol, len(sessions))))
+            opn = np.r_[close[0], close[:-1]] * np.exp(rng.normal(0, vol / 4, len(sessions)))
+            df = frame(opn, close)
+            df.index = sessions
+            p = tmp_path / f"{sym}.csv"
+            df.rename_axis("date").reset_index().to_csv(p, index=False, date_format="%Y-%m-%d")
+            lab.import_csv(sym, p)
+        out = lab.auto_search().run("AUTO-LEV", workers=1, limit=6)
+        assert out["done"] >= 6 and out["failed"] == 0 and out["pending"] == 0
+        assert lab.registry.holdout_ledger() == []
+        assert sum(f["count"] for f in out["funnel"]) + len(out["candidates"]) == out["done"]
+    finally:
+        lab.close()
