@@ -168,3 +168,25 @@ def test_auto_search_page_runs_and_lists_results(win, tmp_path):
     assert win.lab.registry.holdout_ledger() == []
     # AUTO specs never appear as strategy cards on the home page
     assert not any("AUTO-" in str(p) for p in win.lab.strategy_files())
+
+
+def test_auto_page_unlocks_after_a_failed_run(win, monkeypatch):
+    """build-26: a run that failed (and a summary that could not be read) left the page looking busy,
+    with the other groups' tabs disabled."""
+    from quantlab.services.autosearch import AutoSearch
+
+    win.go("자동 탐색")
+    page = win.auto
+    page.choose("AUTO-LEV")
+
+    def broken(self, *a, **k):
+        raise RuntimeError("spec refused")
+
+    monkeypatch.setattr(AutoSearch, "run", broken)
+    monkeypatch.setattr(AutoSearch, "summary", broken)
+    page.start()
+    assert not page.running
+    assert page.start_btn.isEnabled() and not page.stop_btn.isEnabled()
+    assert all(b.isEnabled() for b in page.seg_buttons.values())
+    page.choose("AUTO-LEVP")
+    assert page.group == "AUTO-LEVP"

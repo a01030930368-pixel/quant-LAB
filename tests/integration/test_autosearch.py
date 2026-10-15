@@ -274,3 +274,28 @@ def test_beat_metric_sharpe():
     assert A.first_failure(m, auto, beat=0.8, t_req=5.0) is None  # CAGR below SPY's is fine here
     assert A.first_failure(m, auto, beat=0.95, t_req=5.0) == "spy"
     assert A.first_failure(dict(m, sharpe=None), auto, beat=0.5, t_req=5.0) == "spy"
+
+
+def test_group_loads_after_its_spec_got_a_new_version(tmp_path):
+    """A PC that registered AUTO-LEV@1.0.0 (build-24) loads 1.1.0 and keeps counting the family's trials."""
+    from quantlab.services.lab import Lab
+
+    lab = Lab(tmp_path / "QL")
+    try:
+        cur = A.AutoSearch(lab).spec_path("AUTO-LEV").read_text(encoding="utf-8")
+        old = tmp_path / "AUTO-LEV.qls.yaml"
+        old.write_text(cur.replace("version: 1.1.0", "version: 1.0.0", 1).replace("auto_lev_v2", "auto_lev_v1"),
+                       encoding="utf-8")
+        imp = lab.import_strategy(old)
+        assert imp.loaded.version == "1.0.0"
+        assert imp.strategy_hash == "d4d7896e1ae9d0859f117cfac031cc63f0548c83e55937f3320dde2516609c64"
+        lab.registry.create_batch("A-old", imp.strategy_hash, "v", {"auto": True})
+        lab.registry.register_trials("A-old", [(0, {"entry": "z20_1.5", "filter": "none", "exit": "none",
+                                                    "max_hold": 5, "stop": 0, "take": 0})])
+        auto = A.AutoSearch(lab)
+        strategy_hash, loaded = auto.loaded("AUTO-LEV")
+        assert loaded.version == "1.1.0" and strategy_hash != imp.strategy_hash
+        assert auto.n_trials("AUTO-LEV", lab.policy_for(loaded)[1]) == 1 + 342_000
+        assert len(auto.trials("AUTO-LEV")) == 1
+    finally:
+        lab.close()
