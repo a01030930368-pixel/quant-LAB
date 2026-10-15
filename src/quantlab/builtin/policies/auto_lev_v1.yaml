@@ -3,8 +3,12 @@
 # Written 2026-10-15 before any data for these ETFs was downloaded by the app or seen by Claude.
 # Chosen by the user after all four 1x groups (91,392 combinations) produced no candidate: about two
 # thirds failed the +1.2% gross-per-trade bar, so this group trades instruments that move ~3x as much.
-# The catalog, costs, gates and filters are the same as the 1x groups; only the universe, the splits
-# (the ETFs list 2008-12 .. 2014-01) and the slot count differ.
+# Costs, gates and filters are the same as the 1x groups. The building blocks are catalog 2: catalog 1
+# plus deeper entry thresholds, RSI(14) and 20-day-return entries, 60/120-day lows, SPY 200-day market
+# filters, three more exits, a 3-day holding period, 20% stops and 20/30% takes (342,000 combinations;
+# the user asked on 2026-10-15 to add "very many" combinations). Catalog 2 was written after seeing the
+# 1x funnels only, not any data of these ETFs. The universe, the splits (the ETFs list 2008-12 ..
+# 2014-01) and the slot count also differ from the 1x groups.
 # The prior project tested US 3x ETFs (SPXL, TQQQ) only; none of these four.
 # Frozen: the registry stores its hash; changing anything requires version: 2.
 policy_id: auto_lev

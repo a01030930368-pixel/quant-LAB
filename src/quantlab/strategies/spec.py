@@ -125,7 +125,8 @@ def check_schema(spec: Any) -> list[str]:
         if "combo" in rules and isinstance(params, dict):
             from quantlab.strategies.combo import validate_params
 
-            p += validate_params(params)
+            combo = rules["combo"] if isinstance(rules["combo"], dict) else {}
+            p += validate_params(params, combo.get("catalog", 1))
     elif rules["kind"] == "python":
         if ":" not in str(rules.get("entry", "")):
             p.append("rules.entry must be 'file.py:ClassName' for python rules")

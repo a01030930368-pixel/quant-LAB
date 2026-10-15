@@ -23,6 +23,7 @@ import json
 import math
 import multiprocessing as mp
 import os
+import threading
 import uuid
 from datetime import datetime, timezone
 from typing import Callable
@@ -142,6 +143,12 @@ def neighbour_ok(m: dict, auto: dict) -> bool:
     return _support(m, auto) and m.get("cagr_2x") is not None and m["cagr_2x"] > 0
 
 
+# trial states and grid orders kept between calls (see AutoSearch.trials and AutoSearch.order)
+_LOCK = threading.RLock()
+_STATE: dict[tuple[str, str], dict] = {}
+_ORDER: dict[tuple, list[tuple[str, dict]]] = {}
+
+
 # ----------------------------------------------------------------------------- workers
 _W: dict = {}
 
@@ -189,29 +196,56 @@ class AutoSearch:
         _, loaded = self.loaded(group)
         return self.lab.policy_for(loaded)
 
+    def catalog(self, group: str) -> int:
+        return combo.catalog_of(self.loaded(group)[1].spec["rules"]["combo"])
+
     def order(self, loaded, policy: dict) -> list[dict]:
         """The fixed order of the whole grid (pre-registered by the spec, the catalog and the seed)."""
+        return [p for _, p in self._keyed_order(loaded, policy)]
+
+    def _keyed_order(self, loaded, policy: dict) -> list[tuple[str, dict]]:
         from quantlab.services.batch import grid
 
-        g = grid(loaded.search_space)
-        perm = np.random.default_rng(int(policy["auto_search"]["order_seed"])).permutation(len(g))
-        return [g[i] for i in perm]
+        seed = int(policy["auto_search"]["order_seed"])
+        with _LOCK:
+            if (loaded.strategy_hash, seed) not in _ORDER:
+                g = grid(loaded.search_space)
+                perm = np.random.default_rng(seed).permutation(len(g))
+                _ORDER[(loaded.strategy_hash, seed)] = [(key(g[i]), g[i]) for i in perm]
+            return _ORDER[(loaded.strategy_hash, seed)]
 
     # --- records -------------------------------------------------------------------
     def trials(self, group: str) -> dict[str, dict]:
-        """Latest state of every trial of the family, by combination."""
-        by_id: dict[tuple, dict] = {}
-        for ev in self.lab.registry.trial_events_for(group):
-            tid = (ev["batch_id"], ev["trial_index"])
-            st = by_id.setdefault(tid, {"id": tid, "params": None, "status": None, "metrics": None, "detail": None})
-            if ev["params"]:
-                st["params"] = json.loads(ev["params"])
-            st["status"] = ev["event"]
-            if ev["event"] == "done" and ev["detail"]:
-                st["metrics"] = restore_numbers(json.loads(ev["detail"]))
-            elif ev["event"] == "failed":
-                st["detail"] = ev["detail"]
-        return {key(v["params"]): v for v in by_id.values() if v["params"]}
+        """Latest state of every trial of the family, by combination.
+
+        Kept per registry file and group for the life of the process and brought up to date with only
+        the events written since the last call: a group can hold hundreds of thousands of trials and
+        the page reads this every few seconds while a search runs."""
+        reg = self.lab.registry
+        with _LOCK:
+            cache_key = (str(reg.path.resolve()), group)
+            st = _STATE.get(cache_key)
+            if st is None or reg.last_trial_event_id() < st["last"]:  # new or replaced registry file
+                st = _STATE[cache_key] = {"last": 0, "by_id": {}, "by_key": {}}
+            by_id, by_key = st["by_id"], st["by_key"]
+            for ev in reg.trial_events_for(group, after=st["last"]):
+                tid = (ev["batch_id"], ev["trial_index"])
+                v = by_id.get(tid)
+                if v is None:
+                    v = by_id[tid] = {"id": tid, "params": None, "status": None, "metrics": None, "detail": None}
+                if v["params"] is None and ev["params"]:
+                    v["params"] = json.loads(ev["params"])
+                    # stored params are canonical JSON; with exactly the combo keys that is already the key
+                    by_key[ev["params"] if len(v["params"]) == len(combo.PARAMS) else key(v["params"])] = v
+                v["status"] = ev["event"]
+                if ev["event"] == "done" and ev["detail"]:
+                    d = ev["detail"]
+                    v["metrics"] = restore_numbers(json.loads(d)) if ("NaN" in d or "Inf" in d) else json.loads(d)
+                    v.pop("pre", None)
+                elif ev["event"] == "failed":
+                    v["detail"] = ev["detail"]
+                st["last"] = ev["event_id"]
+            return dict(by_key)
 
     def n_trials(self, group: str, policy: dict) -> int:
         return self.lab.registry.count_trials_for_family(group) + int(policy["auto_search"].get("prior_trials", 0))
@@ -247,12 +281,12 @@ class AutoSearch:
             batch_id = pending[0]["id"][0]
             todo = [(v["id"][1], v["params"], v["id"][0]) for v in pending]
         else:
-            fresh = [p for p in self.order(loaded, policy) if key(p) not in known][: int(limit or auto["trials_per_run"])]
+            fresh = [p for k, p in self._keyed_order(loaded, policy) if k not in known][: int(limit or auto["trials_per_run"])]
             if not fresh:
                 return self.summary(group) | {"note": "이 묶음의 조합을 모두 시험했습니다."}
             batch_id = f"A-{datetime.now(timezone.utc):%Y%m%d%H%M%S}-{uuid.uuid4().hex[:6]}"
             reg.create_batch(batch_id, strategy_hash, version,
-                             {"auto": True, "catalog": combo.CATALOG, "trials": fresh, "policy_hash": policy_hash,
+                             {"auto": True, "catalog": self.catalog(group), "trials": fresh, "policy_hash": policy_hash,
                               "scope": "dev", "beat_symbol": auto["beat_symbol"], "beat_cagr": beat})
             reg.register_trials(batch_id, list(enumerate(fresh)))
             todo = [(i, p, batch_id) for i, p in enumerate(fresh)]
@@ -329,7 +363,7 @@ class AutoSearch:
         for v in known.values():
             if v["metrics"] is None or first_failure(v["metrics"], auto, beat, t_req) is not None:
                 continue
-            for nb in combo.neighbours(v["params"]):
+            for nb in combo.neighbours(v["params"], self.catalog(group)):
                 k = key(nb)
                 if k not in known:
                     need[k] = nb
@@ -350,9 +384,12 @@ class AutoSearch:
             m = v["metrics"]
             if m is None or beat is None:
                 continue
-            fail = first_failure(m, auto, beat, t_req)
+            pre = v.get("pre")  # first failure apart from the t-value threshold, which moves with n
+            if pre is None or pre[0] != beat:
+                pre = v["pre"] = (beat, first_failure(m, auto, beat, -math.inf))
+            fail = pre[1] if pre[1] is not None else first_failure(m, auto, beat, t_req)
             if fail is None:
-                nbs = [known.get(key(p)) for p in combo.neighbours(v["params"])]
+                nbs = [known.get(key(p)) for p in combo.neighbours(v["params"], self.catalog(group))]
                 tried = [x for x in nbs if x is not None and x["metrics"] is not None]
                 ok = sum(1 for x in tried if neighbour_ok(x["metrics"], auto))
                 if len(tried) < len(nbs):
@@ -367,7 +404,7 @@ class AutoSearch:
             if fail is not None:
                 funnel[fail] += 1
         rows.sort(key=lambda r: -(r.get("t") or 0))
-        grid_size = len(self.order(loaded, policy))
+        grid_size = len(self._keyed_order(loaded, policy))
         done = sum(1 for v in known.values() if v["status"] == "done")
         reads = sum(1 for r in self.lab.registry.holdout_ledger() if r["strategy_family"] == group)
         return {"group": group, "name": loaded.spec["strategy"]["name"], "strategy_hash": strategy_hash,

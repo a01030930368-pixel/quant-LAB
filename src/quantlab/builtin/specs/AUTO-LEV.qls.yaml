@@ -1,5 +1,6 @@
 # Generator spec of the automatic strategy search for 3배 ETF. Its parameters pick one building block
-# from each list (quantlab.strategies.combo, catalog 1); every combination is one registered trial.
+# from each list (quantlab.strategies.combo, catalog 2: the 1x groups'
+# catalog 1 plus deeper thresholds, wider stops/takes and SPY market filters); every combination is one registered trial.
 # The search runs on TRAIN+VALIDATION only. A candidate is this spec with its parameters fixed
 # (후보 확정), and only the user starts its final evaluation.
 spec_version: 1
@@ -32,7 +33,7 @@ universe:
 rules:
   kind: declarative
   combo:
-    catalog: 1
+    catalog: 2
     trade: [EDC, YINN, KORU, EURL]
     slots: 4
 execution:
@@ -40,12 +41,12 @@ execution:
   fill: next_open
   rebalance: daily
 parameters:
-  entry: {default: z20_1.5, search: [z20_1.5, z20_2.0, z20_2.5, rsi2_5, rsi2_10, rsi2_15, down3, down4, down5, ret5_3, ret5_5, ret5_8, ret10_5, ret10_8, ret10_12, low20, ibs_0.1, ibs_0.2, below5_2, below5_4, below20_4, below20_7, below60_7, below60_12, below120_10, below120_15, golden5_20, golden20_60, golden60_120, breakup20, breakup60, breakup120, macd_up, macd_up_neg]}
-  filter: {default: none, search: [none, up200, up120, aligned, down200, macd_pos]}
-  exit: {default: none, search: [none, above5, above10, above20, rsi2_70, macd_dn, below20]}
-  max_hold: {default: 5, search: [5, 10, 20, 30]}
-  stop: {default: 0, search: [0, 0.1]}
-  take: {default: 0, search: [0, 0.1]}
+  entry: {default: z20_1.5, search: [z20_1.5, z20_2.0, z20_2.5, z20_3.0, rsi2_2, rsi2_5, rsi2_10, rsi2_15, down3, down4, down5, down6, ret5_3, ret5_5, ret5_8, ret5_12, ret5_15, ret10_5, ret10_8, ret10_12, ret10_16, ret10_20, low20, low60, low120, ibs_0.05, ibs_0.1, ibs_0.2, below5_2, below5_4, below5_6, below20_4, below20_7, below20_10, below20_15, below60_7, below60_12, below60_16, below60_20, below120_10, below120_15, below120_20, below120_25, golden5_20, golden20_60, golden60_120, breakup20, breakup60, breakup120, macd_up, macd_up_neg, rsi14_30, rsi14_25, rsi14_20, ret20_10, ret20_15, ret20_20]}
+  filter: {default: none, search: [none, up200, up120, aligned, down200, macd_pos, up60, macd_neg, spy_up200, spy_down200]}
+  exit: {default: none, search: [none, above5, above10, above20, rsi2_70, macd_dn, below20, rsi2_50, rsi2_90, high5]}
+  max_hold: {default: 5, search: [3, 5, 10, 20, 30]}
+  stop: {default: 0, search: [0, 0.1, 0.2]}
+  take: {default: 0, search: [0, 0.1, 0.2, 0.3]}
 benchmark: SPY_buy_and_hold
 costs: {one_way_bps: 30}   # informational; the validation policy's costs are binding
 validation:
