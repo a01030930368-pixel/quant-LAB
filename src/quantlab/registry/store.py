@@ -331,13 +331,16 @@ class Registry:
             "WHERE s.strategy_id=? ORDER BY b.created_at, b.batch_id", (strategy_id,))
         return [dict(r) | {"config": json.loads(r["config"])} for r in rows]
 
-    def trial_events_for(self, strategy_id: str) -> list[dict]:
-        """Every trial event of the family's batches, oldest first."""
+    def trial_events_for(self, strategy_id: str, after: int = 0) -> list[dict]:
+        """Trial events of the family's batches with event_id above `after`, oldest first."""
         rows = self.conn.execute(
-            "SELECT t.batch_id, t.trial_index, t.event, t.params, t.detail FROM trial_events t "
+            "SELECT t.event_id, t.batch_id, t.trial_index, t.event, t.params, t.detail FROM trial_events t "
             "JOIN batches b ON b.batch_id=t.batch_id JOIN strategies s ON s.strategy_hash=b.strategy_hash "
-            "WHERE s.strategy_id=? ORDER BY t.event_id", (strategy_id,))
+            "WHERE s.strategy_id=? AND t.event_id>? ORDER BY t.event_id", (strategy_id, after))
         return [dict(r) for r in rows]
+
+    def last_trial_event_id(self) -> int:
+        return int(self.conn.execute("SELECT COALESCE(MAX(event_id), 0) AS n FROM trial_events").fetchone()["n"])
 
     def trial_status(self, batch_id: str) -> dict[int, str]:
         """Latest event per trial index."""

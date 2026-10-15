@@ -1,6 +1,8 @@
 """Automatic strategy search (D-020): pre-registration, holdout isolation, resume, fixed order,
 trial counting and the filters."""
 
+import itertools
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -147,3 +149,74 @@ def test_neighbours_are_one_step_away():
     assert {n["entry"] for n in nbs if n["entry"] != "z20_2.0"} == {"z20_1.5", "z20_2.5"}
     assert {n["max_hold"] for n in nbs if n["max_hold"] != 10} == {5, 20}
     assert len(combo.neighbours(dict(p, entry="low20", max_hold=5))) == 1
+
+
+def _loaded_policy(lab, auto):
+    _, loaded = auto.loaded("AUTO-LEV")
+    return loaded, lab.policy_for(loaded)[1]
+
+
+def test_late_listed_leveraged_group_runs(tmp_path):
+    """AUTO-LEV: the ETFs list between 2008 and 2014; rows before a listing are empty, not an error."""
+    lab = Lab(tmp_path / "QL")
+    try:
+        rng = np.random.default_rng(9)
+        starts = {"EDC": "2008-12-17", "YINN": "2009-12-03", "KORU": "2013-04-11", "EURL": "2014-01-23",
+                  "SPY": "2007-06-01", "BIL": "2007-06-01"}
+        for sym, start in starts.items():
+            sessions = exchange_sessions(start, "2022-12-30")
+            drift, vol = {"BIL": (0.00005, 0.0005), "SPY": (0.0003, 0.011)}.get(sym, (0.0, 0.035))
+            close = 30 * np.exp(np.cumsum(rng.normal(drift, vol, len(sessions))))
+            opn = np.r_[close[0], close[:-1]] * np.exp(rng.normal(0, vol / 4, len(sessions)))
+            df = frame(opn, close)
+            df.index = sessions
+            p = tmp_path / f"{sym}.csv"
+            df.rename_axis("date").reset_index().to_csv(p, index=False, date_format="%Y-%m-%d")
+            lab.import_csv(sym, p)
+        auto = lab.auto_search()
+        out = auto.run("AUTO-LEV", workers=1, limit=6)
+        assert out["done"] >= 6 and out["failed"] == 0 and out["pending"] == 0
+        assert lab.registry.holdout_ledger() == []
+        assert sum(f["count"] for f in out["funnel"]) + len(out["candidates"]) == out["done"]
+        assert len(auto.order(*_loaded_policy(lab, auto))) == 342_000
+        _, loaded = auto.loaded("AUTO-LEV")
+        _, policy = lab.policy_for(loaded)
+        version = lab.ensure_dataset(loaded.spec["universe"]["symbols"], policy["splits"]["train"][0])
+        data, _ = lab._strategy_symbols_data(loaded, version)
+        from quantlab.validation.engine import dev_data
+
+        dev = dev_data(data, policy)
+        base = dict(entry="rsi2_10", exit="above5", max_hold=10, stop=0, take=0)
+        up = A.trial_metrics(loaded.factory, dict(base, filter="spy_up200"), dev, policy)
+        down = A.trial_metrics(loaded.factory, dict(base, filter="spy_down200"), dev, policy)
+        both = A.trial_metrics(loaded.factory, dict(base, filter="none"), dev, policy)
+        assert up["n"] > 0 and down["n"] > 0 and up["n"] + down["n"] >= both["n"] * 0.8
+    finally:
+        lab.close()
+
+
+def test_catalog_2_extends_catalog_1_without_changing_it():
+    one, two = combo.full_space(1), combo.full_space(2)
+    assert all(set(one[k]) <= set(two[k]) for k in combo.PARAMS)
+    assert [k for k in two["entry"] if k in one["entry"]] == one["entry"]  # same relative order
+    assert len(list(itertools.product(*two.values()))) == 342_000
+    p = dict(entry="rsi2_5", filter="spy_up200", exit="high5", max_hold=3, stop=0.2, take=0.3)
+    assert {n["entry"] for n in combo.neighbours(p, 2) if n["entry"] != "rsi2_5"} == {"rsi2_2", "rsi2_10"}
+    assert {n["max_hold"] for n in combo.neighbours(p, 2) if n["max_hold"] != 3} == {5}
+    assert {n["entry"] for n in combo.neighbours(dict(p, max_hold=5), 1) if n["entry"] != "rsi2_5"} == {"rsi2_10"}
+    rules = combo.build_rules({"catalog": 2, "trade": ["EDC"], "slots": 4}, p)["entry_exit"]["legs"][0]
+    assert {"indicator": "close_vs_sma", "op": ">", "value": 0, "days": 200, "of": "SPY"} in rules["entry"]
+    with pytest.raises(ValueError):
+        combo.build_rules({"catalog": 1, "trade": ["EDC"], "slots": 4}, p)
+    assert combo.validate_combo({"catalog": 2, "trade": ["EDC"], "slots": 4}, ["EDC"])  # SPY missing
+
+
+def test_trial_states_read_incrementally_match_a_fresh_read(lab):
+    before = A.AutoSearch(lab).trials(GROUP)
+    lab.auto.run(GROUP, workers=1, limit=3)
+    cached = A.AutoSearch(lab).trials(GROUP)
+    assert len(cached) == len(before) + 3
+    A._STATE.clear()
+    fresh = A.AutoSearch(lab).trials(GROUP)
+    strip = lambda d: {k: {f: v[f] for f in ("id", "params", "status", "metrics", "detail")} for k, v in d.items()}
+    assert strip(cached) == strip(fresh)

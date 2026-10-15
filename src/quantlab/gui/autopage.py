@@ -27,12 +27,14 @@ def _keep_awake(on: bool) -> None:
     ctypes.windll.kernel32.SetThreadExecutionState(es_continuous | (es_system_required if on else 0))
 
 
-GROUP_NAME = {"AUTO-DEVA": "선진국 A", "AUTO-DEVB": "선진국 B", "AUTO-EM": "신흥국", "AUTO-REAL": "채권·금·원자재·리츠"}
+GROUP_NAME = {"AUTO-DEVA": "선진국 A", "AUTO-DEVB": "선진국 B", "AUTO-EM": "신흥국", "AUTO-REAL": "채권·금·원자재·리츠",
+             "AUTO-LEV": "3배 ETF"}
 GROUP_NOTE = {
     "AUTO-DEVA": "일본·독일·영국·캐나다·호주·프랑스·스위스·홍콩·싱가포르 ETF 9종",
     "AUTO-DEVB": "스웨덴·네덜란드·스페인·이탈리아·벨기에·오스트리아 ETF 6종",
     "AUTO-EM": "브라질·멕시코·대만·한국·남아공·말레이시아·중국 ETF 7종",
     "AUTO-REAL": "미국 장기·중기 국채, 회사채, 금, 은, 원자재, 리츠 ETF 7종",
+    "AUTO-LEV": "신흥국·중국·한국·유럽 3배 레버리지 ETF 4종 (EDC·YINN·KORU·EURL), 2010년부터",
 }
 
 
@@ -49,6 +51,7 @@ class AutoPage(Page):
         self.summary: dict | None = None
         self.limit: int | None = None  # tests run a few combinations instead of a full run
         self._exhausted: set[str] = set()  # groups whose whole grid has been tried
+        self._reading = self._read_again = False  # a summary read is running / another was asked for
 
         head = QHBoxLayout()
         head.addWidget(label("자동 탐색", "h1"))
@@ -160,12 +163,59 @@ class AutoPage(Page):
         self.refresh()
 
     def refresh(self) -> None:
+        """Read the group's summary off the window thread (the first read of a large group takes a
+        while; later reads only add the trials written since) and show it when it arrives."""
         self.group_note.setText(GROUP_NOTE.get(self.group, ""))
-        try:
-            s = self.lab.auto_search().summary(self.group)
-        except Exception as e:  # shown, never swallowed
-            self.step.setText(f"요약을 읽지 못했습니다: {e}")
+        if self.win.runner.sync:
+            try:
+                self._show(self.lab.auto_search().summary(self.group))
+            except Exception as e:  # shown, never swallowed
+                self.step.setText(f"요약을 읽지 못했습니다: {e}")
             return
+        if self._reading:
+            self._read_again = True
+            return
+        from quantlab.gui.main_window import _Job, _Signals
+
+        self._reading, self._read_again = True, False
+        group, root = self.group, self.lab.ws.root
+        sig = _Signals()
+        self._keep.append(sig)
+
+        def job(prog):
+            from quantlab.services.lab import Lab
+
+            lab = Lab(root)  # its own registry connection; the window keeps using its own
+            try:
+                return lab.auto_search().summary(group)
+            finally:
+                lab.close()
+
+        def arrived(s):
+            self._read_done(sig)
+            if s["group"] == self.group:
+                self._show(s)
+
+        def failed(text):
+            self._read_done(sig)
+            self.step.setText(f"요약을 읽지 못했습니다: {text.splitlines()[0]}")
+
+        sig.done.connect(arrived)
+        sig.failed.connect(failed)
+        if not self.summary or self.summary.get("group") != group:
+            self.step.setText("탐색 기록을 읽는 중")
+        QThreadPool.globalInstance().start(_Job(job, sig))
+
+    def _read_done(self, sig) -> None:
+        self._reading = False
+        if sig in self._keep:
+            self._keep.remove(sig)
+        if self._read_again:
+            self.refresh()
+
+    def _show(self, s: dict) -> None:
+        if self.step.text() == "탐색 기록을 읽는 중":
+            self.step.setText("")
         self.summary = s
         v = self.kpi_values
         v[0].setText(f"{s['done']:,} / {s['grid']:,}")
@@ -267,7 +317,7 @@ class AutoPage(Page):
             self._exhausted.add(group)
             rest = [g for g in GROUPS if g not in self._exhausted]
             if not rest:
-                self.step.setText("네 묶음의 조합을 모두 시험했습니다.")
+                self.step.setText("모든 묶음의 조합을 시험했습니다.")
                 return
             nxt = [g for g in GROUPS[GROUPS.index(self.group) + 1:] + GROUPS if g not in self._exhausted]
             group = nxt[0]
