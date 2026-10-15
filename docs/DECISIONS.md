@@ -247,7 +247,7 @@ rarely beats an index that is fully invested through a bull market. The user cho
   other cannot have one (the app refuses).
 - Drawdown, cost, consistency and t filters are unchanged.
 
-## D-023 — Near misses can be reviewed, not promoted (2026-10-15)
+## D-023 · 2026-10-15 · Near misses can be reviewed, not promoted
 
 The user wanted to look again at the ~8,000 AUTO-LEV combinations that fell short only at the SPY
 Sharpe check.
