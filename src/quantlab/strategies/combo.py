@@ -9,6 +9,7 @@ item from each list below; the search runs combinations of them on TRAIN+VALIDAT
         catalog: 1
         trade: [EWJ, EWG, ...]
         slots: 5                  # each open leg holds 1/5 of equity (D-018 slots sizing)
+        park: SPY                 # optional: equity not in an open leg is held in SPY
     parameters:
       entry:    {default: z20_2.0, search: [...]}   # keys of ENTRIES
       filter:   {default: none, search: [...]}      # keys of FILTERS
@@ -147,6 +148,8 @@ def validate_combo(combo: Any, symbols: list[str]) -> list[str]:
         errs.append("rules.combo.trade must be a non-empty list of universe.symbols")
     if not isinstance(combo.get("slots"), int) or combo["slots"] < 1:
         errs.append("rules.combo.slots must be a whole number >= 1")
+    if combo.get("park") is not None and (combo["park"] not in symbols or combo["park"] in (trade or [])):
+        errs.append("rules.combo.park must be a universe symbol that is not traded")
     if combo.get("catalog") in CATALOGS:
         used = {c.get("of") for f in filters(combo["catalog"]).values() for c in f[1]} - {None}
         if not used <= set(symbols):
@@ -187,7 +190,10 @@ def build_rules(combo: dict, params: dict) -> dict:
     if params["take"]:
         ex["take_profit"] = float(params["take"])
     legs = [{"name": f"{params['entry']}-{sym}", "trade": sym, "entry": entry, "exit": ex} for sym in combo["trade"]]
-    return {"entry_exit": {"sizing": {"slots": int(combo["slots"])}, "legs": legs}}
+    sizing: dict[str, Any] = {"slots": int(combo["slots"])}
+    if combo.get("park"):
+        sizing["park"] = combo["park"]  # idle equity held in this symbol
+    return {"entry_exit": {"sizing": sizing, "legs": legs}}
 
 
 def describe(params: dict) -> str:

@@ -41,7 +41,9 @@ from quantlab.strategies.spec import load_spec
 from quantlab.validation import metrics as M
 from quantlab.validation.engine import BuyAndHold, _cfg, _rf, dev_data
 
-GROUPS = ("AUTO-DEVA", "AUTO-DEVB", "AUTO-EM", "AUTO-REAL", "AUTO-LEV")
+GROUPS = ("AUTO-DEVA", "AUTO-DEVB", "AUTO-EM", "AUTO-REAL", "AUTO-LEV", "AUTO-LEVP")
+# groups that trade the same ETFs share one holdout: only one final evaluation across them
+SHARED_HOLDOUT = {"AUTO-LEV": ("AUTO-LEV", "AUTO-LEVP"), "AUTO-LEVP": ("AUTO-LEV", "AUTO-LEVP")}
 
 # filter code -> Korean label, in the order they are checked
 FILTERS = [
@@ -57,6 +59,7 @@ FILTERS = [
     ("neighbours", "이웃 조합이 버티지 못함"),
 ]
 FILTER_LABEL = dict(FILTERS)
+SPY_SHARPE_LABEL = "SPY 보유보다 낮은 샤프 (위험 대비 수익)"
 
 
 def key(params: dict) -> str:
@@ -86,6 +89,8 @@ def trial_metrics(factory, params: dict, dev: MarketData, policy: dict) -> dict:
     res = run_backtest(factory(**params), dev, _cfg(policy))
     eq = res.equity
     ep = episodes(res, dev).dropna(subset=["gross"])
+    if auto.get("park_symbol"):  # idle equity held in SPY is not a trade of the rule
+        ep = ep[ep["symbol"] != auto["park_symbol"]]
     train_end = pd.Timestamp(sp["train"][1])
     m: dict = {"n": int(len(ep)), "n_train": int((ep["entry"] <= train_end).sum()),
                "n_validation": int((ep["entry"] > train_end).sum())}
@@ -116,8 +121,9 @@ def _support(m: dict, auto: dict) -> bool:
             and (m.get("ret_train") or -1) > 0 and (m.get("ret_validation") or -1) > 0)
 
 
-def first_failure(m: dict, auto: dict, beat_cagr: float, t_req: float) -> str | None:
-    """The first filter a trial fails (before the neighbour check), or None."""
+def first_failure(m: dict, auto: dict, beat: float, t_req: float) -> str | None:
+    """The first filter a trial fails (before the neighbour check), or None. `beat` is the benchmark's
+    value of the policy's `beat_metric` (CAGR unless the policy says sharpe)."""
     if m["n_train"] < auto["min_trades_train"] or m["n_validation"] < auto["min_trades_validation"]:
         return "trades"
     if (m.get("gross") or -1) < auto["min_gross_per_trade"]:
@@ -126,7 +132,8 @@ def first_failure(m: dict, auto: dict, beat_cagr: float, t_req: float) -> str | 
         return "splits"
     if not (m.get("cagr_2x") is not None and m["cagr_2x"] > 0):
         return "cost2x"
-    if not m["cagr"] > beat_cagr:
+    metric = auto.get("beat_metric", "cagr")
+    if not (m.get(metric) is not None and m[metric] > beat):
         return "spy"
     if not m["mdd"] > auto["max_drawdown_floor"]:
         return "mdd"
@@ -189,6 +196,10 @@ class AutoSearch:
             imp = self.lab.import_strategy(self.spec_path(group))
             if imp.problems and imp.state == "IDEA":
                 raise RuntimeError("; ".join(imp.problems))
+            park = imp.loaded.spec["rules"]["combo"].get("park")
+            _, policy = self.lab.policy_for(imp.loaded)
+            if park != policy["auto_search"].get("park_symbol"):
+                raise RuntimeError(f"{group}: spec park {park!r} differs from the policy's park_symbol")
             self._loaded[group] = (imp.strategy_hash, imp.loaded)
         return self._loaded[group]
 
@@ -250,11 +261,24 @@ class AutoSearch:
     def n_trials(self, group: str, policy: dict) -> int:
         return self.lab.registry.count_trials_for_family(group) + int(policy["auto_search"].get("prior_trials", 0))
 
-    def beat_cagr(self, group: str) -> float | None:
+    def _beat_file(self, group: str):
+        return self.lab.ws.root / "auto" / f"{group}.json"
+
+    def beat_value(self, group: str, metric: str = "cagr") -> float | None:
+        """The benchmark's CAGR or Sharpe over TRAIN+VALIDATION, from the latest run of the group."""
+        try:
+            v = json.loads(self._beat_file(group).read_text(encoding="utf-8")).get(f"beat_{metric}")
+            if v is not None:
+                return float(v)
+        except (OSError, ValueError):
+            pass
         for b in reversed(self.lab.registry.batches_for(group)):
-            if b["config"].get("beat_cagr") is not None:
-                return float(b["config"]["beat_cagr"])
+            if b["config"].get(f"beat_{metric}") is not None:
+                return float(b["config"][f"beat_{metric}"])
         return None
+
+    def beat_cagr(self, group: str) -> float | None:
+        return self.beat_value(group, "cagr")
 
     # --- running -------------------------------------------------------------------
     def run(self, group: str, workers: int = 0, progress: Callable[[int, int], None] | None = None,
@@ -272,7 +296,11 @@ class AutoSearch:
         data, _ = self.lab._strategy_symbols_data(loaded, version)
         dev = dev_data(data, policy)  # the holdout is cut here, before any worker exists
         bench = run_backtest(BuyAndHold(auto["beat_symbol"]), dev, _cfg(policy))
-        beat = M.cagr(bench.equity)
+        beats = {"beat_cagr": M.cagr(bench.equity), "beat_sharpe": M.sharpe(bench.returns(), _rf(dev, policy))}
+        beat = beats[f"beat_{auto.get('beat_metric', 'cagr')}"]
+        f = self._beat_file(group)
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps(beats | {"dataset_version": version}), encoding="utf-8")
 
         known = self.trials(group)
         pending = [v for v in known.values() if v["status"] in ("registered", "cancelled")]
@@ -287,7 +315,7 @@ class AutoSearch:
             batch_id = f"A-{datetime.now(timezone.utc):%Y%m%d%H%M%S}-{uuid.uuid4().hex[:6]}"
             reg.create_batch(batch_id, strategy_hash, version,
                              {"auto": True, "catalog": self.catalog(group), "trials": fresh, "policy_hash": policy_hash,
-                              "scope": "dev", "beat_symbol": auto["beat_symbol"], "beat_cagr": beat})
+                              "scope": "dev", "beat_symbol": auto["beat_symbol"], **beats})
             reg.register_trials(batch_id, list(enumerate(fresh)))
             todo = [(i, p, batch_id) for i, p in enumerate(fresh)]
 
@@ -377,7 +405,8 @@ class AutoSearch:
         known = self.trials(group)
         n = self.n_trials(group, policy)
         t_req = required_t(n, auto["alpha"])
-        beat = self.beat_cagr(group)
+        metric = auto.get("beat_metric", "cagr")
+        beat = self.beat_value(group, metric)
         funnel = {code: 0 for code, _ in FILTERS}
         rows = []
         for v in known.values():
@@ -385,8 +414,8 @@ class AutoSearch:
             if m is None or beat is None:
                 continue
             pre = v.get("pre")  # first failure apart from the t-value threshold, which moves with n
-            if pre is None or pre[0] != beat:
-                pre = v["pre"] = (beat, first_failure(m, auto, beat, -math.inf))
+            if pre is None or pre[0] != (metric, beat):
+                pre = v["pre"] = ((metric, beat), first_failure(m, auto, beat, -math.inf))
             fail = pre[1] if pre[1] is not None else first_failure(m, auto, beat, t_req)
             if fail is None:
                 nbs = [known.get(key(p)) for p in combo.neighbours(v["params"], self.catalog(group))]
@@ -406,13 +435,15 @@ class AutoSearch:
         rows.sort(key=lambda r: -(r.get("t") or 0))
         grid_size = len(self._keyed_order(loaded, policy))
         done = sum(1 for v in known.values() if v["status"] == "done")
-        reads = sum(1 for r in self.lab.registry.holdout_ledger() if r["strategy_family"] == group)
+        reads = self.holdout_reads(group)
         return {"group": group, "name": loaded.spec["strategy"]["name"], "strategy_hash": strategy_hash,
                 "grid": grid_size, "tried": len(known), "done": done,
                 "failed": sum(1 for v in known.values() if v["status"] == "failed"),
                 "pending": sum(1 for v in known.values() if v["status"] in ("registered", "cancelled")),
-                "family_trials": n, "t_required": t_req, "beat_symbol": auto["beat_symbol"], "beat_cagr": beat,
-                "funnel": [{"code": c, "label": lbl, "count": funnel[c]} for c, lbl in FILTERS],
+                "family_trials": n, "t_required": t_req, "beat_symbol": auto["beat_symbol"],
+                "beat_metric": metric, "beat_value": beat, "beat_cagr": self.beat_value(group, "cagr"),
+                "funnel": [{"code": c, "label": SPY_SHARPE_LABEL if c == "spy" and metric == "sharpe" else lbl,
+                            "count": funnel[c]} for c, lbl in FILTERS],
                 "candidates": rows, "holdout_reads": reads}
 
     # --- a candidate -----------------------------------------------------------------
@@ -423,8 +454,16 @@ class AutoSearch:
         version = self.lab.ensure_dataset(loaded.spec["universe"]["symbols"], policy["splits"]["train"][0])
         return self.lab.backtest(strategy_hash, version, params)
 
+    def holdout_reads(self, group: str) -> int:
+        """Final evaluations already run on this group's holdout (and on groups sharing it)."""
+        families = SHARED_HOLDOUT.get(group, (group,))
+        return sum(1 for r in self.lab.registry.holdout_ledger() if r["strategy_family"] in families)
+
     def final_evaluation(self, group: str, params: dict):
         """Confirm the combination and read the group's holdout once. Only the user starts this."""
+        others = [g for g in SHARED_HOLDOUT.get(group, ()) if g != group]
+        if others and any(r["strategy_family"] in others for r in self.lab.registry.holdout_ledger()):
+            raise RuntimeError("같은 ETF의 보류 구간을 다른 묶음에서 이미 열었습니다. 이 묶음은 최종 평가를 할 수 없습니다.")
         strategy_hash, loaded = self.loaded(group)
         _, policy = self.lab.policy_for(loaded)
         version = self.lab.ensure_dataset(loaded.spec["universe"]["symbols"], policy["splits"]["train"][0])
