@@ -28,18 +28,20 @@ def _keep_awake(on: bool) -> None:
 
 
 GROUP_NAME = {"AUTO-DEVA": "선진국 A", "AUTO-DEVB": "선진국 B", "AUTO-EM": "신흥국", "AUTO-REAL": "채권·금·원자재·리츠",
-             "AUTO-LEV": "3배 ETF"}
+             "AUTO-LEV": "3배 ETF", "AUTO-LEVP": "3배 ETF + 쉬는 돈 SPY"}
 GROUP_NOTE = {
     "AUTO-DEVA": "일본·독일·영국·캐나다·호주·프랑스·스위스·홍콩·싱가포르 ETF 9종",
     "AUTO-DEVB": "스웨덴·네덜란드·스페인·이탈리아·벨기에·오스트리아 ETF 6종",
     "AUTO-EM": "브라질·멕시코·대만·한국·남아공·말레이시아·중국 ETF 7종",
     "AUTO-REAL": "미국 장기·중기 국채, 회사채, 금, 은, 원자재, 리츠 ETF 7종",
-    "AUTO-LEV": "신흥국·중국·한국·유럽 3배 레버리지 ETF 4종 (EDC·YINN·KORU·EURL), 2010년부터",
+    "AUTO-LEV": "신흥국·중국·한국·유럽 3배 레버리지 ETF 4종 (EDC·YINN·KORU·EURL), 2010년부터. SPY와 샤프로 비교",
+    "AUTO-LEVP": "같은 3배 ETF 4종, 거래하지 않는 돈은 SPY에 넣어 둠. 합계 연수익으로 SPY와 비교. "
+                 "3배 ETF 묶음과 보류 구간을 함께 써서 최종 평가는 둘 중 하나만 가능",
 }
 
 
 class AutoPage(Page):
-    COLS = ("규칙", "거래", "비용 전/거래", "비용 후/거래", "연수익", "MDD", "t값", "이웃", "상태")
+    COLS = ("규칙", "거래", "비용 전/거래", "비용 후/거래", "연수익", "샤프", "MDD", "t값", "이웃", "상태")
 
     def __init__(self, win):
         super().__init__()
@@ -79,7 +81,7 @@ class AutoPage(Page):
         self.body.addWidget(self.group_note)
 
         self.kpis, self.kpi_values = kpi_strip([("시험한 조합", "—", None), ("이 묶음 누적 시험", "—", None),
-                                                ("필요한 t값", "—", None), ("SPY 보유 연수익", "—", None),
+                                                ("필요한 t값", "—", None), ("SPY 보유 기준", "—", None),
                                                 ("후보", "—", None)])
         self.body.addWidget(self.kpis)
 
@@ -221,7 +223,8 @@ class AutoPage(Page):
         v[0].setText(f"{s['done']:,} / {s['grid']:,}")
         v[1].setText(f"{s['family_trials']:,}")
         v[2].setText(f"{s['t_required']:.2f}")
-        v[3].setText(pct(s["beat_cagr"]))
+        b = s.get("beat_value")
+        v[3].setText("—" if b is None else (f"샤프 {b:.2f}" if s.get("beat_metric") == "sharpe" else f"연 {pct(b)}"))
         v[4].setText(f"{sum(1 for c in s['candidates'] if c['status'] == '후보')}")
         if not self.running:
             self.start_btn.setText(f"이어서 하기 ({s['pending']:,}개 남음)" if s["pending"] else "탐색 시작 (3,000개)")
@@ -234,7 +237,8 @@ class AutoPage(Page):
         self.cands.setRowCount(len(rows))
         for i, r in enumerate(rows):
             vals = [cell(r["rule"], mono=False, align=Qt.AlignLeft), cell(f"{r['n']}"), cell(pct(r.get("gross"), True)),
-                    cell(pct(r.get("net"), True)), cell(pct(r.get("cagr"), True)), cell(pct(r.get("mdd"))),
+                    cell(pct(r.get("net"), True)), cell(pct(r.get("cagr"), True)),
+                    cell(f"{r['sharpe']:.2f}" if r.get("sharpe") is not None else "—"), cell(pct(r.get("mdd"))),
                     cell(f"{r['t']:.2f}" if r.get("t") is not None else "—"), cell(r["neighbours"]),
                     cell(r["status"], theme.OK if r["status"] == "후보" else theme.ACCENT, mono=False)]
             for j, it in enumerate(vals):

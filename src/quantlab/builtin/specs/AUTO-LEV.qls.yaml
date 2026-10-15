@@ -50,4 +50,4 @@ parameters:
 benchmark: SPY_buy_and_hold
 costs: {one_way_bps: 30}   # informational; the validation policy's costs are binding
 validation:
-  policy: auto_lev_v1
+  policy: auto_lev_v2

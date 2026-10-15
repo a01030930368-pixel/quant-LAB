@@ -6,6 +6,8 @@ Each leg trades one symbol, one position at a time:
       sizing: equal_active          # all open legs share equity equally (re-sized on every change)
                                     # or {slots: K}: each open leg holds 1/K of equity, set once at
                                     # entry; other positions are not traded when a leg opens/closes
+                                    # {slots: K, park: SPY}: equity not in an open leg is held in SPY
+                                    # (bought on the first session, resized whenever a leg opens/closes)
       legs:
         - name: S2
           trade: SPXL               # symbol bought
@@ -90,6 +92,10 @@ def validate_entry_exit(ee: Any, symbols: list[str]) -> list[str]:
     sizing = ee.get("sizing", "equal_active")
     if not (sizing == "equal_active" or (isinstance(sizing, dict) and int(sizing.get("slots", 0)) >= 1)):
         errs.append("rules.entry_exit.sizing must be equal_active or {slots: K}")
+    elif isinstance(sizing, dict) and sizing.get("park") is not None:
+        traded = {leg.get("trade") for leg in ee["legs"] if isinstance(leg, dict)}
+        if sizing["park"] not in symbols or sizing["park"] in traded:
+            errs.append("rules.entry_exit.sizing.park must be a universe symbol that no leg trades")
     names = set()
     for k, leg in enumerate(ee["legs"]):
         where = f"rules.entry_exit.legs[{k}]"
@@ -279,6 +285,7 @@ class EntryExitStrategy(Strategy):
         self.rules = rules
         ee = rules["entry_exit"]
         self.sizing = ee.get("sizing", "equal_active")
+        self.park = self.sizing.get("park") if isinstance(self.sizing, dict) else None
         self.legs = [_Leg(leg) for leg in ee["legs"]]
         self.trades: list[dict] = []
         self._last_w: dict[str, float] = {}
@@ -287,7 +294,7 @@ class EntryExitStrategy(Strategy):
         return {"strategy_id": self.strategy_id, "version": self.version, "params": self.params, "rules": self.rules}
 
     def on_bar(self, view: MarketView):
-        changed = False
+        changed = self.park is not None and not self._last_w  # buy the parking symbol on the first session
         cache: dict = {}
         now = view.now
         for leg in self.legs:
@@ -326,7 +333,9 @@ class EntryExitStrategy(Strategy):
         w = self._weights()
         if self.sizing == "equal_active":
             return w
-        moved = PartialWeights({k: v for k, v in w.items() if abs(v - self._last_w.get(k, 0.0)) > 1e-12})
+        # the parking symbol is listed on every change so it is resized to what the legs leave free
+        moved = PartialWeights({k: v for k, v in w.items()
+                                if k == self.park or abs(v - self._last_w.get(k, 0.0)) > 1e-12})
         self._last_w = w
         return moved or None
 
@@ -334,11 +343,15 @@ class EntryExitStrategy(Strategy):
         w = {s: 0.0 for s in self.symbols}
         active = [leg for leg in self.legs if leg.decided is not None]
         if not active:
+            if self.park is not None:
+                w[self.park] = 1.0
             return w
         share = 1.0 / len(active) if self.sizing == "equal_active" else 1.0 / int(self.sizing["slots"])
         share = min(share, 1.0 / len(active))
         for leg in active:
             w[leg.spec["trade"]] += share
+        if self.park is not None:
+            w[self.park] = max(0.0, 1.0 - sum(v for k, v in w.items() if k != self.park))
         return w
 
 

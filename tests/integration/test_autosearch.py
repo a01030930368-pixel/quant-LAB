@@ -128,12 +128,12 @@ def test_filters_in_order_and_required_t():
             "max_drawdown_floor": -0.35}
     good = dict(n_train=50, n_validation=30, gross=0.02, ret_train=0.1, ret_validation=0.05, cagr_2x=0.03,
                 cagr=0.09, mdd=-0.2, net_ex_top10=0.004, cagr_ex_best_year=0.05, t=5.0)
-    assert A.first_failure(good, auto, beat_cagr=0.07, t_req=4.4) is None
+    assert A.first_failure(good, auto, beat=0.07, t_req=4.4) is None
     assert A.first_failure(dict(good, n_validation=10), auto, 0.07, 4.4) == "trades"
     assert A.first_failure(dict(good, gross=0.011), auto, 0.07, 4.4) == "gross"
     assert A.first_failure(dict(good, ret_validation=-0.01), auto, 0.07, 4.4) == "splits"
     assert A.first_failure(dict(good, cagr_2x=None), auto, 0.07, 4.4) == "cost2x"
-    assert A.first_failure(good, auto, beat_cagr=0.10, t_req=4.4) == "spy"
+    assert A.first_failure(good, auto, beat=0.10, t_req=4.4) == "spy"
     assert A.first_failure(dict(good, mdd=-0.4), auto, 0.07, 4.4) == "mdd"
     assert A.first_failure(dict(good, net_ex_top10=-0.001), auto, 0.07, 4.4) == "top10"
     assert A.first_failure(dict(good, cagr_ex_best_year=-0.01), auto, 0.07, 4.4) == "bestyear"
@@ -191,6 +191,24 @@ def test_late_listed_leveraged_group_runs(tmp_path):
         down = A.trial_metrics(loaded.factory, dict(base, filter="spy_down200"), dev, policy)
         both = A.trial_metrics(loaded.factory, dict(base, filter="none"), dev, policy)
         assert up["n"] > 0 and down["n"] > 0 and up["n"] + down["n"] >= both["n"] * 0.8
+        assert out["beat_metric"] == "sharpe" and out["beat_value"] == auto.beat_value("AUTO-LEV", "sharpe")
+        assert next(f["label"] for f in out["funnel"] if f["code"] == "spy") == A.SPY_SHARPE_LABEL
+
+        # the same combinations with idle equity parked in SPY
+        park = auto.run("AUTO-LEVP", workers=1, limit=4)
+        assert park["done"] >= 4 and park["failed"] == 0 and park["beat_metric"] == "cagr"
+        assert park["family_trials"] == 4 + 342_000  # AUTO-LEV's grid counts as prior trials
+        _, lp = auto.loaded("AUTO-LEVP")
+        _, pp = lab.policy_for(lp)
+        mp = A.trial_metrics(lp.factory, dict(base, filter="none"), dev_data(data, pp), pp)
+        assert mp["n"] == both["n"] and mp["gross"] == pytest.approx(both["gross"])  # SPY is not a trade
+        assert mp["cagr"] != pytest.approx(both["cagr"])
+        # one final evaluation across the two groups: they share the holdout
+        monkey = [{"strategy_family": "AUTO-LEV"}]
+        lab.registry.holdout_ledger = lambda: monkey
+        assert auto.holdout_reads("AUTO-LEVP") == 1
+        with pytest.raises(RuntimeError):
+            auto.final_evaluation("AUTO-LEVP", dict(base, filter="none"))
     finally:
         lab.close()
 
@@ -220,3 +238,39 @@ def test_trial_states_read_incrementally_match_a_fresh_read(lab):
     fresh = A.AutoSearch(lab).trials(GROUP)
     strip = lambda d: {k: {f: v[f] for f in ("id", "params", "status", "metrics", "detail")} for k, v in d.items()}
     assert strip(cached) == strip(fresh)
+
+
+def test_parked_equity_sits_in_spy_and_is_not_a_trade():
+    from quantlab.backtesting.engine import BacktestConfig, run_backtest
+    from quantlab.analysis.trades import episodes
+    from quantlab.strategies.entry_exit import EntryExitStrategy
+    from synthetic import random_market
+
+    d = random_market(4, n=700, symbols=("A", "B", "SPY"), split_prob=0.005)
+    p = dict(entry="rsi2_10", filter="none", exit="above5", max_hold=10, stop=0, take=0)
+    runs = {}
+    for park in (None, "SPY"):
+        c = {"catalog": 2, "trade": ["A", "B"], "slots": 4, **({"park": park} if park else {})}
+        st = EntryExitStrategy(spec_id="X", spec_version_str="1", symbols=["A", "B", "SPY"],
+                               rules=combo.build_rules(c, p), fast=True)
+        runs[park] = run_backtest(st, d, BacktestConfig())
+    plain, parked = runs[None], runs["SPY"]
+    assert (plain.cash / plain.equity).mean() > 0.5
+    # from the first fill on, idle equity is in SPY; never borrowed
+    assert (parked.cash / parked.equity).iloc[1:].max() < 0.02 and parked.cash.min() > -1e-6
+    ep_plain, ep_parked = episodes(plain, d), episodes(parked, d)
+    for sym in ("A", "B"):  # the rule's own trades are the same days
+        assert list(ep_plain[ep_plain.symbol == sym]["entry"]) == list(ep_parked[ep_parked.symbol == sym]["entry"])
+    held = parked.shares["SPY"] > 0
+    assert held.iloc[1:].all()  # bought on the first session and never sold out completely
+    assert combo.validate_combo({"catalog": 2, "trade": ["A"], "slots": 4, "park": "A"}, ["A", "SPY"])
+
+
+def test_beat_metric_sharpe():
+    auto = {"min_trades_train": 40, "min_trades_validation": 20, "min_gross_per_trade": 0.012,
+            "max_drawdown_floor": -0.35, "beat_metric": "sharpe"}
+    m = dict(n_train=50, n_validation=30, gross=0.02, ret_train=0.1, ret_validation=0.05, cagr_2x=0.03,
+             cagr=0.05, sharpe=0.9, mdd=-0.2, net_ex_top10=0.004, cagr_ex_best_year=0.05, t=6.0)
+    assert A.first_failure(m, auto, beat=0.8, t_req=5.0) is None  # CAGR below SPY's is fine here
+    assert A.first_failure(m, auto, beat=0.95, t_req=5.0) == "spy"
+    assert A.first_failure(dict(m, sharpe=None), auto, beat=0.5, t_req=5.0) == "spy"

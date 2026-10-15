@@ -228,3 +228,21 @@ average; exits RSI(2) > 50/90 and a 5-day high; holding 3 days added; stops 0/10
 neighbours and rules are byte-for-byte what they were, so the 1x groups' recorded trials keep their
 meaning. With this many trials the search keeps each group's trial states in memory and reads only
 new events, and the page reads its summary off the window thread.
+
+## D-022 · 2026-10-15 · Beating SPY: risk-adjusted, and with idle equity in SPY
+After 85,600 of AUTO-LEV's combinations: 38,750 too few trades, 40,397 below +1.2% gross per trade,
+3,149 a losing split, 852 lost at 2x costs, and all 2,452 that were left fell short of SPY's CAGR
+(about 13%/yr over 2010-2019). A swing rule is out of the market most of the time, so on CAGR it
+rarely beats an index that is fully invested through a bull market. The user chose to try both:
+
+- AUTO-LEV, policy `auto_lev_v2`: the SPY filter compares Sharpe (rule vs SPY buy-and-hold, with
+  BIL as the risk-free rate, TRAIN+VALIDATION), as Gates 2 and 3 of the final evaluation already do.
+  Trials recorded under v1 keep their numbers (each stored its Sharpe) and are judged again.
+- AUTO-LEVP, policy `auto_levp_v1`: the same 342,000 combinations with equity not in an open leg
+  held in SPY (`rules.combo.park`, entry_exit `sizing: {slots: K, park: SPY}`: SPY is bought on the
+  first session and resized, with costs, whenever a leg opens or closes). Its total CAGR must beat
+  SPY buy-and-hold. SPY's round trips are not trades of the rule: per-trade numbers and t exclude them.
+- Each family counts the other's 342,000 combinations as prior trials (required t about 5.3).
+  They trade the same ETFs and so share one holdout: once either has had its final evaluation, the
+  other cannot have one (the app refuses).
+- Drawdown, cost, consistency and t filters are unchanged.
