@@ -82,6 +82,26 @@ class MarketView:
         v = arr[self._t]
         return float(v) if np.isfinite(v) else None
 
+    def _panels(self, builder) -> dict:
+        cache = self._data.__dict__.setdefault("_panels", {})
+        name = f"{builder.__module__}.{builder.__qualname__}"
+        if name not in cache:
+            cache[name] = builder(self._data)
+        return cache[name]
+
+    def panel(self, builder, name: str, back: int = 0) -> np.ndarray | None:
+        """Row `back` sessions before now of a whole-dataset table (sessions x columns) built by app
+        code: `builder(data)` returns {name: array}, built once per dataset from data up to each row
+        only (as `indicator`). Read-only; None before the first session."""
+        t = self._t - back
+        if t < 0:
+            return None
+        return self._panels(builder)[name][t]
+
+    def panel_columns(self, builder) -> tuple:
+        """Column names of `builder`'s tables (its 'symbols' entry)."""
+        return self._panels(builder)["symbols"]
+
     def is_member(self, symbol: str) -> bool:
         """Index membership today (True when the data carries no membership table)."""
         m = self._data.members

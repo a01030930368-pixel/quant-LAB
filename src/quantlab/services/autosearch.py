@@ -36,12 +36,12 @@ from quantlab.analysis.trades import episodes, without_best_year
 from quantlab.backtesting.engine import run_backtest
 from quantlab.core.hashing import canonical_json, restore_numbers
 from quantlab.core.market_data import MarketData
-from quantlab.strategies import combo
+from quantlab.strategies import combo, stock_combo
 from quantlab.strategies.spec import load_spec
 from quantlab.validation import metrics as M
 from quantlab.validation.engine import BuyAndHold, _cfg, _rf, dev_data
 
-GROUPS = ("AUTO-DEVA", "AUTO-DEVB", "AUTO-EM", "AUTO-REAL", "AUTO-LEV", "AUTO-LEVP")
+GROUPS = ("AUTO-DEVA", "AUTO-DEVB", "AUTO-EM", "AUTO-REAL", "AUTO-LEV", "AUTO-LEVP", "AUTO-SP500")
 # groups that trade the same ETFs share one holdout: only one final evaluation across them
 SHARED_HOLDOUT = {"AUTO-LEV": ("AUTO-LEV", "AUTO-LEVP"), "AUTO-LEVP": ("AUTO-LEV", "AUTO-LEVP")}
 
@@ -72,7 +72,19 @@ EARLY_FILTERS = ("trades", "gross", "splits", "cost2x")
 
 
 def key(params: dict) -> str:
-    return canonical_json({k: params[k] for k in combo.PARAMS})
+    names = stock_combo.PARAMS if "slots" in params and "hold" in params else combo.PARAMS
+    return canonical_json({k: params[k] for k in names})
+
+
+_PARAM_SETS = (frozenset(combo.PARAMS), frozenset(stock_combo.PARAMS))
+
+
+def blocks(loaded):
+    """The building-block module of a generator spec and its rules block (ETF `combo` or index `stock_combo`)."""
+    rules = loaded.spec["rules"]
+    if "stock_combo" in rules:
+        return stock_combo, rules["stock_combo"]
+    return combo, rules["combo"]
 
 
 def required_t(n_trials: int, alpha: float) -> float:
@@ -97,13 +109,15 @@ def trial_metrics(factory, params: dict, dev: MarketData, policy: dict) -> dict:
     sp = policy["splits"]
     res = run_backtest(factory(**params), dev, _cfg(policy))
     eq = res.equity
-    ep = episodes(res, dev).dropna(subset=["gross"])
-    if auto.get("park_symbol"):  # idle equity held in SPY is not a trade of the rule
-        ep = ep[ep["symbol"] != auto["park_symbol"]]
+    versus = auto.get("versus")  # stock rules: judge each trade against SPY held for the same days
+    ep = episodes(res, dev, exclude=(auto["park_symbol"],) if auto.get("park_symbol") else (),
+                  excess_vs=versus).dropna(subset=["gross"])
     train_end = pd.Timestamp(sp["train"][1])
     m: dict = {"n": int(len(ep)), "n_train": int((ep["entry"] <= train_end).sum()),
                "n_validation": int((ep["entry"] > train_end).sum())}
     if len(ep):
+        if versus:
+            ep = ep.assign(net=ep["net"] - ep["bench"])  # net return over SPY
         net = ep["net"].to_numpy()
         by_day = ep.groupby("entry")["net"].mean().to_numpy()
         k = len(by_day)
@@ -112,6 +126,8 @@ def trial_metrics(factory, params: dict, dev: MarketData, policy: dict) -> dict:
                  net_ex_top10=float(np.sort(net)[::-1][10:].mean()) if len(net) > 10 else None,
                  t=float(by_day.mean() / (sd / math.sqrt(k))) if k > 1 and sd > 0 else None,
                  win_rate=float((net > 0).mean()), mean_sessions=float(ep["sessions"].mean()))
+        if versus:
+            m["excess"] = float(ep["excess"].mean())
     rf = _rf(dev, policy)
     m.update(cagr=M.cagr(eq), mdd=M.max_drawdown(eq), sharpe=M.sharpe(res.returns(), rf),
              ret_train=_split_return(eq, sp["train"][0], sp["train"][1]),
@@ -126,8 +142,13 @@ def trial_metrics(factory, params: dict, dev: MarketData, policy: dict) -> dict:
 def _support(m: dict, auto: dict) -> bool:
     """trades, gross and both splits positive (the cheap filters; neighbours must clear these too)."""
     return (m["n_train"] >= auto["min_trades_train"] and m["n_validation"] >= auto["min_trades_validation"]
-            and (m.get("gross") or -1) >= auto["min_gross_per_trade"]
+            and (m.get(_gross_field(auto)) or -1) >= auto["min_gross_per_trade"]
             and (m.get("ret_train") or -1) > 0 and (m.get("ret_validation") or -1) > 0)
+
+
+def _gross_field(auto: dict) -> str:
+    """Per-trade return before costs that the gross filter reads: over SPY for stock rules."""
+    return "excess" if auto.get("versus") else "gross"
 
 
 def first_failure(m: dict, auto: dict, beat: float, t_req: float) -> str | None:
@@ -135,7 +156,7 @@ def first_failure(m: dict, auto: dict, beat: float, t_req: float) -> str | None:
     value of the policy's `beat_metric` (CAGR unless the policy says sharpe)."""
     if m["n_train"] < auto["min_trades_train"] or m["n_validation"] < auto["min_trades_validation"]:
         return "trades"
-    if (m.get("gross") or -1) < auto["min_gross_per_trade"]:
+    if (m.get(_gross_field(auto)) or -1) < auto["min_gross_per_trade"]:
         return "gross"
     if not ((m.get("ret_train") or -1) > 0 and (m.get("ret_validation") or -1) > 0):
         return "splits"
@@ -205,7 +226,7 @@ class AutoSearch:
             imp = self.lab.import_strategy(self.spec_path(group))
             if imp.problems and imp.state == "IDEA":
                 raise RuntimeError("; ".join(imp.problems))
-            park = imp.loaded.spec["rules"]["combo"].get("park")
+            park = blocks(imp.loaded)[1].get("park")
             _, policy = self.lab.policy_for(imp.loaded)
             if park != policy["auto_search"].get("park_symbol"):
                 raise RuntimeError(f"{group}: spec park {park!r} differs from the policy's park_symbol")
@@ -217,7 +238,11 @@ class AutoSearch:
         return self.lab.policy_for(loaded)
 
     def catalog(self, group: str) -> int:
-        return combo.catalog_of(self.loaded(group)[1].spec["rules"]["combo"])
+        mod, block = blocks(self.loaded(group)[1])
+        return mod.catalog_of(block)
+
+    def blocks(self, group: str):
+        return blocks(self.loaded(group)[1])[0]
 
     def order(self, loaded, policy: dict) -> list[dict]:
         """The fixed order of the whole grid (pre-registered by the spec, the catalog and the seed)."""
@@ -256,7 +281,7 @@ class AutoSearch:
                 if v["params"] is None and ev["params"]:
                     v["params"] = json.loads(ev["params"])
                     # stored params are canonical JSON; with exactly the combo keys that is already the key
-                    by_key[ev["params"] if len(v["params"]) == len(combo.PARAMS) else key(v["params"])] = v
+                    by_key[ev["params"] if frozenset(v["params"]) in _PARAM_SETS else key(v["params"])] = v
                 v["status"] = ev["event"]
                 if ev["event"] == "done" and ev["detail"]:
                     d = ev["detail"]
@@ -301,7 +326,7 @@ class AutoSearch:
         strategy_hash, loaded = self.loaded(group)
         policy_hash, policy = self.lab.policy_for(loaded)
         auto = policy["auto_search"]
-        version = self.lab.ensure_dataset(loaded.spec["universe"]["symbols"], policy["splits"]["train"][0], say)
+        version = self.lab.ensure_spec_dataset(loaded, policy, say)
         data, _ = self.lab._strategy_symbols_data(loaded, version)
         dev = dev_data(data, policy)  # the holdout is cut here, before any worker exists
         bench = run_backtest(BuyAndHold(auto["beat_symbol"]), dev, _cfg(policy))
@@ -400,7 +425,7 @@ class AutoSearch:
         for v in known.values():
             if v["metrics"] is None or first_failure(v["metrics"], auto, beat, t_req) is not None:
                 continue
-            for nb in combo.neighbours(v["params"], self.catalog(group)):
+            for nb in self.blocks(group).neighbours(v["params"], self.catalog(group)):
                 k = key(nb)
                 if k not in known:
                     need[k] = nb
@@ -412,6 +437,7 @@ class AutoSearch:
         _, policy = self.lab.policy_for(loaded)
         auto = policy["auto_search"]
         known = self.trials(group)
+        mod = self.blocks(group)
         n = self.n_trials(group, policy)
         t_req = required_t(n, auto["alpha"])
         metric = auto.get("beat_metric", "cagr")
@@ -429,7 +455,7 @@ class AutoSearch:
                 pre = v["pre"] = ((metric, beat), first_failure(m, auto, beat, -math.inf))
             fail = pre[1] if pre[1] is not None else first_failure(m, auto, beat, t_req)
             if fail is None:
-                nbs = [known.get(key(p)) for p in combo.neighbours(v["params"], self.catalog(group))]
+                nbs = [known.get(key(p)) for p in mod.neighbours(v["params"], self.catalog(group))]
                 tried = [x for x in nbs if x is not None and x["metrics"] is not None]
                 ok = sum(1 for x in tried if neighbour_ok(x["metrics"], auto))
                 if len(tried) < len(nbs):
@@ -439,13 +465,13 @@ class AutoSearch:
                     fail = None if nbs and ok >= auto["neighbour_min_share"] * len(nbs) else "neighbours"
                     status = None
                 if fail is None:
-                    rows.append({"params": v["params"], "rule": combo.describe(v["params"]),
+                    rows.append({"params": v["params"], "rule": mod.describe(v["params"]),
                                  "neighbours": f"{ok}/{len(nbs)}", "status": status or "후보", **m})
             if fail is not None:
                 funnel[fail] += 1
                 if fail not in EARLY_FILTERS:
                     if "rule" not in v:
-                        v["rule"] = combo.describe(v["params"])
+                        v["rule"] = mod.describe(v["params"])
                     pre_reg = PREREGISTERED.get(group) == v["params"]
                     near.append({**m, "params": v["params"], "rule": v["rule"], "fail": fail, "preregistered": pre_reg,
                                  "status": PREREGISTERED_LABEL if pre_reg else
@@ -470,7 +496,7 @@ class AutoSearch:
         """A normal recorded exploratory backtest of one combination (TRAIN+VALIDATION)."""
         strategy_hash, loaded = self.loaded(group)
         _, policy = self.lab.policy_for(loaded)
-        version = self.lab.ensure_dataset(loaded.spec["universe"]["symbols"], policy["splits"]["train"][0])
+        version = self.lab.ensure_spec_dataset(loaded, policy)
         return self.lab.backtest(strategy_hash, version, params)
 
     def holdout_reads(self, group: str) -> int:
@@ -485,6 +511,6 @@ class AutoSearch:
             raise RuntimeError("같은 ETF의 보류 구간을 다른 묶음에서 이미 열었습니다. 이 묶음은 최종 평가를 할 수 없습니다.")
         strategy_hash, loaded = self.loaded(group)
         _, policy = self.lab.policy_for(loaded)
-        version = self.lab.ensure_dataset(loaded.spec["universe"]["symbols"], policy["splits"]["train"][0])
+        version = self.lab.ensure_spec_dataset(loaded, policy)
         self.lab.confirm_candidate(strategy_hash, params, note="automatic search candidate")
         return self.lab.final_evaluation(strategy_hash, version)
