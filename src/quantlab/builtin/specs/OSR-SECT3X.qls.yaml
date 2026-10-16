@@ -1,0 +1,62 @@
+# Replication of the oversold-rebound rule on 3x ETFs this project has never used (D-025).
+# The rule is the one fixed in D-024 (AUTO-LEVP), unchanged. Its final evaluation on EDC/YINN/KORU/EURL
+# (2026-10-16, EXP-20261016-aa7f8c248d) repeated the per-trade edge out of sample (+2.3% net per trade,
+# win rate 67%) but failed Gate 3: Sharpe 0.61 vs SPY 0.65 and max drawdown -55.7%.
+# Two things are fixed here before any run of this spec:
+#   - the ETFs: Direxion 3x bull sector/size funds listed before 2012 that are not index trackers
+#     (SPXL/TQQQ/UPRO were used by the earlier project and are left out);
+#   - the size: each open leg gets 10% of equity (slots 10) instead of 25%, so at most 70% is in 3x
+#     funds when all seven signal at once. This is the only change, chosen to cut the drawdown.
+# Nothing is searched: one parameter set, one trial.
+# Evidence: the TRAIN+VALIDATION backtest (2010-2019) of these ETFs replicates the rule on unseen data.
+# The 2020+ holdout cannot count (the size was chosen after AUTO-LEVP's 2020+ result, and that result was
+# exported), so the verdict comes from the forward holdout: data from 2026-10-17 on (paper trading).
+spec_version: 1
+strategy:
+  id: OSR-SECT3X
+  version: 1.0.0
+  name: 3배 업종 ETF 과매도 반등 (비중 10%, 쉬는 돈 SPY)
+  type: mean_reversion
+  author: claude
+  parent: AUTO-LEVP@1.0.0
+  derived_after_holdout_view: true   # sizing chosen after AUTO-LEVP's holdout; these ETFs are unseen
+hypothesis:
+  class: data_mining
+  economic_rationale: >
+    Sharp short-term declines in leveraged equity funds partly revert (Connors & Alvarez 2009). The same
+    pre-fixed rule kept its per-trade edge on four non-US 3x ETFs out of sample; if the effect is real it
+    should also appear on US sector 3x ETFs it was never fitted to. Smaller legs should keep the edge while
+    cutting the crash drawdown that failed the first test.
+  expected_risks:
+    - the seven funds are correlated; a market crash triggers all of them at once (at most 70% exposure)
+    - with 10% legs the edge adds little return on top of SPY
+    - daily-reset 3x funds can fall 60%+ in a crash; a 20% stop limits each leg only at the next open
+  falsification: >
+    On the holdout (2020-01 onward), net Sharpe not above SPY buy-and-hold with block-bootstrap p < 0.10,
+    or max drawdown above 80% of SPY's. Trade level: net mean per trade at or below 0.
+universe:
+  market: US_ETF
+  symbols: [SOXL, TNA, FAS, ERX, TECL, DRN, CURE, SPY, BIL]
+  frequency: daily
+rules:
+  kind: declarative
+  combo:
+    catalog: 2
+    trade: [SOXL, TNA, FAS, ERX, TECL, DRN, CURE]
+    slots: 10
+    park: SPY
+execution:
+  signal_time: close
+  fill: next_open
+  rebalance: daily
+parameters:
+  entry: {default: ret5_15}
+  filter: {default: down200}
+  exit: {default: rsi2_70}
+  max_hold: {default: 5}
+  stop: {default: 0.2}
+  take: {default: 0.1}
+benchmark: SPY_buy_and_hold
+costs: {one_way_bps: 30}   # informational; the validation policy's costs are binding
+validation:
+  policy: osr_sect3x_v1
