@@ -332,3 +332,24 @@ gross per trade, but SPY gained +0.88% over the same 20 sessions (excess +0.23%,
 - Event strategies report each trade's return over SPY held for the same days (`mean_excess`,
   `t_excess_day_clustered`), the first number to read: below the round-trip cost there is no edge.
 - Policy `pead_v1`: same splits, costs and gates as `ins_cluster_v1`.
+
+## D-028 · 2026-10-16 · Automatic search on S&P 500 stocks (AUTO-SP500)
+- The user asked for the app to combine many variables and search on its own. After PEAD-SP500
+  (+0.62% per trade over SPY before costs, about the 0.6% round trip) the next step is stacking
+  conditions: fewer trades, possibly a larger edge each.
+- New rules block `stock_combo` (catalog 1, `quantlab.strategies.stock_combo`): 15 conditions in
+  8 groups (earnings reaction over SPY within 5 sessions 3/5/8%, 1/2 officers or directors buying
+  ≥$10k in 30 days, 5-day return -5/-10%, RSI(14)<30 / RSI(2)<10, opening gap +3/+5%, above/below
+  the 200-day average, SPY above its 200-day average, 52-week high). An entry is 1 to 3 conditions
+  from different groups (465), with hold 5/10/20/30/60, stop 0/10/20%, take 0/10/20%, 10 or 20
+  slots: 41,850 combinations. Volume was planned but the price tables carry no volume; the opening
+  gap took its place.
+- A stock is bought at the next open on the session all its conditions become true (not all true the
+  session before), if it is an index member. More signals than free slots: a fixed seeded random
+  order picks. Idle equity in SPY with `park_band` as PEAD-SP500.
+- Condition tables are built once per dataset from data up to each row (`MarketView.panel`, read
+  one row at a time); the leak test covers them.
+- Policy `auto_sp500_v1`: AUTO-LEVP's filters, with the per-trade filters (gross ≥ 1.2%, top-10,
+  t-value) read on the return over SPY held for the same days (`versus: SPY`), so market drift does
+  not pass as an edge. prior_trials 2 (INS-CLUSTER, PEAD-SP500). Holdout 2020+, final evaluation by
+  the user only.

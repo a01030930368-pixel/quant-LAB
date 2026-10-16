@@ -336,3 +336,28 @@ def test_earnings_events_after_the_bar_are_invisible():
     data = earn_market([("2020-01-07", "X"), ("2020-02-04", "Y")], {"X": "2020-01-07", "Y": "2020-02-04"})
     make = lambda **p: EarningsDriftStrategy(spec_id="T", spec_version_str="1", rules=EARN)  # noqa: E731
     assert leak_test(make, {}, data, cutpoints=4, seed=1) == []
+
+
+def test_auto_search_on_index_stocks_runs_on_dev_data_only(lab, built):
+    """D-028: the AUTO-SP500 group runs on the index dataset, judges trades against SPY and never
+    reads the holdout."""
+    from quantlab.services import autosearch as A
+
+    auto = lab.auto_search()
+    seen = []
+    real = A.trial_metrics
+
+    def spy(factory, params, dev, policy):
+        seen.append(dev.calendar[-1])
+        return real(factory, params, dev, policy)
+
+    A.trial_metrics = spy
+    try:
+        out = auto.run("AUTO-SP500", workers=1, limit=3)
+    finally:
+        A.trial_metrics = real
+    assert out["grid"] == 41850 and out["done"] >= 3 and out["failed"] == 0
+    assert max(seen) <= pd.Timestamp("2019-12-31")
+    assert out["family_trials"] >= 3 + 2  # INS-CLUSTER and PEAD-SP500 count as prior trials
+    m = next(v["metrics"] for v in auto.trials("AUTO-SP500").values() if v["metrics"] and v["metrics"]["n"])
+    assert "excess" in m

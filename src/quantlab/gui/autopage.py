@@ -44,7 +44,7 @@ def _keep_awake(on: bool) -> None:
 
 
 GROUP_NAME = {"AUTO-DEVA": "선진국 A", "AUTO-DEVB": "선진국 B", "AUTO-EM": "신흥국", "AUTO-REAL": "채권·금·원자재·리츠",
-             "AUTO-LEV": "3배 ETF", "AUTO-LEVP": "3배 ETF + 쉬는 돈 SPY"}
+             "AUTO-LEV": "3배 ETF", "AUTO-LEVP": "3배 ETF + 쉬는 돈 SPY", "AUTO-SP500": "S&P 500 종목"}
 GROUP_NOTE = {
     "AUTO-DEVA": "일본·독일·영국·캐나다·호주·프랑스·스위스·홍콩·싱가포르 ETF 9종",
     "AUTO-DEVB": "스웨덴·네덜란드·스페인·이탈리아·벨기에·오스트리아 ETF 6종",
@@ -53,6 +53,8 @@ GROUP_NOTE = {
     "AUTO-LEV": "신흥국·중국·한국·유럽 3배 레버리지 ETF 4종 (EDC·YINN·KORU·EURL), 2010년부터. SPY와 샤프로 비교",
     "AUTO-LEVP": "같은 3배 ETF 4종, 거래하지 않는 돈은 SPY에 넣어 둠. 합계 연수익으로 SPY와 비교. "
                  "3배 ETF 묶음과 보류 구간을 함께 써서 최종 평가는 둘 중 하나만 가능",
+    "AUTO-SP500": "그날 S&P 500에 속한 종목. 실적 반응·내부자 매수·급락·RSI·갭 상승·200일선·SPY 추세·52주 신고가 중 "
+                  "1~3개를 겹친 조건. 거래마다 같은 기간 SPY보다 얼마나 더 벌었는지로 거르고, 쉬는 돈은 SPY",
 }
 
 

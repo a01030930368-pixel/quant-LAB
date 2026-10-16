@@ -111,7 +111,7 @@ def check_schema(spec: Any) -> list[str]:
 
         if un["index"] not in INDEXES:
             p.append(f"universe.index must be one of {list(INDEXES)}")
-    for block in ("insider", "earnings"):
+    for block in ("insider", "earnings", "stock_combo"):
         if spec["rules"].get(block) is not None and "index" not in un:
             p.append(f"{block} rules trade an index's stocks: set universe.index")
     if un["frequency"] != "daily":
@@ -135,6 +135,11 @@ def check_schema(spec: Any) -> list[str]:
 
             combo = rules["combo"] if isinstance(rules["combo"], dict) else {}
             p += validate_params(params, combo.get("catalog", 1))
+        if "stock_combo" in rules and isinstance(params, dict):
+            from quantlab.strategies import stock_combo
+
+            sc = rules["stock_combo"] if isinstance(rules["stock_combo"], dict) else {}
+            p += stock_combo.validate_params(params, sc.get("catalog", 1))
     elif rules["kind"] == "python":
         if ":" not in str(rules.get("entry", "")):
             p.append("rules.entry must be 'file.py:ClassName' for python rules")
@@ -240,6 +245,10 @@ def load_spec(path: str | Path) -> LoadedSpec:
         symbols, rebalance = spec["universe"]["symbols"], spec["execution"]["rebalance"]
 
         def factory(**params):
+            if "stock_combo" in rules:
+                from quantlab.strategies.stock_combo import StockComboStrategy
+
+                return StockComboStrategy(spec_id=sid, spec_version_str=ver, rules=rules, **params)
             if "earnings" in rules:
                 from quantlab.strategies.earnings import EarningsDriftStrategy
 
