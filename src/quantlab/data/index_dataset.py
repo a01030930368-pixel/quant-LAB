@@ -19,19 +19,48 @@ import pandas as pd
 
 from quantlab.core.hashing import file_sha256, stable_hash
 from quantlab.core.market_data import MarketData
-from quantlab.data import sec_insider, sp500
+from quantlab.data import sec_earnings, sec_insider, sp500
 
-PROCESSING_VERSION = 1
+PROCESSING_VERSION = 2   # 2: earnings announcement events (D-027)
 MIN_LINKED_SHARE = 0.90      # members with at least one Form 4 linked; below this the mapping is suspect
 MIN_BASKET_CORR = 0.90       # equal-weight member basket vs SPY, daily returns
+MIN_EARNINGS_SHARE = 0.80    # member-years with at least 3 earnings filings
+
+
+def _insider_tables(sec_records: dict[str, dict]) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
+    purchases, filings, counts = [], [], {}
+    for q, meta in sorted(sec_records.items()):
+        p, f, c = sec_insider.load_parsed(meta)
+        purchases.append(p)
+        filings.append(f)
+        counts[q] = c
+    return pd.concat(purchases, ignore_index=True), pd.concat(filings, ignore_index=True), counts
+
+
+def issuer_links(bundle: dict, sec_records: dict[str, dict]) -> pd.DataFrame:
+    """Issuer (CIK) -> price ticker links for every ticker in the bundle that was ever an index member.
+    Cached beside the bundle, keyed by the input hashes."""
+    key = stable_hash({"v": PROCESSING_VERSION, "bundle": {k: v["sha256"] for k, v in bundle["files"].items()},
+                       "sec": {q: m["sha256"] for q, m in sorted(sec_records.items())}})
+    cache = Path(bundle["dir"]) / f"links.{key[:16]}.parquet"
+    if cache.exists():
+        return pd.read_parquet(cache)
+    prices, members_long = sp500.read_bundle(bundle)
+    have = prices[prices["ticker"].isin(set(members_long["ticker"]))]
+    ranges = have.groupby("ticker")["date"].agg(first="min", last="max").reset_index()
+    purchases, filings, _ = _insider_tables(sec_records)
+    links = sec_insider.map_issuers(purchases, filings, ranges)[1]
+    links.to_parquet(cache, index=False)
+    return links
 
 
 def build(store, base_version: str, bundle: dict, sec_records: dict[str, dict], start: str,
-          say=None) -> tuple[str, dict]:
+          say=None, earnings_records: dict[str, dict] | None = None) -> tuple[str, dict]:
     say = say or (lambda s: None)
     inputs = {"processing": PROCESSING_VERSION, "kind": "index", "index": "SP500", "start": str(start),
               "base_dataset": base_version, "bundle": {k: v["sha256"] for k, v in bundle["files"].items()},
-              "sec": {q: m["sha256"] for q, m in sorted(sec_records.items())}}
+              "sec": {q: m["sha256"] for q, m in sorted(sec_records.items())},
+              "earnings": {c: m["sha256"] for c, m in sorted((earnings_records or {}).items())}}
     version = stable_hash(inputs)
     done = store.proc_dir / version[:16] / "manifest.json"
     if done.exists():  # same inputs, same dataset
@@ -46,18 +75,19 @@ def build(store, base_version: str, bundle: dict, sec_records: dict[str, dict], 
     frames = {t: frames[t] for t in members.columns}
 
     say("SEC 내부자 거래 자료 정리 중")
-    purchases, filings, sec_counts = [], [], {}
-    for q, meta in sorted(sec_records.items()):
-        p, f, c = sec_insider.load_parsed(meta)
-        purchases.append(p)
-        filings.append(f)
-        sec_counts[q] = c
-    purchases = pd.concat(purchases, ignore_index=True)
-    filings = pd.concat(filings, ignore_index=True)
+    purchases, filings, sec_counts = _insider_tables(sec_records)
     have = prices[prices["ticker"].isin(set(members.columns))]
     ranges = have.groupby("ticker")["date"].agg(first="min", last="max").reset_index()
     mapped, links = sec_insider.map_issuers(purchases, filings, ranges)
     events = sec_insider.insider_events(mapped)
+    earn = pd.DataFrame(columns=["known", "symbol", "accession", "kind"])
+    if earnings_records:
+        say("SEC 실적 발표 공시 정리 중")
+        parsed = [sec_earnings.load_parsed(m) for _, m in sorted(earnings_records.items())]
+        earn = sec_earnings.earnings_events(pd.concat(parsed, ignore_index=True), links)
+    events = pd.concat([events, earn], ignore_index=True).sort_values(["known", "symbol"], kind="stable")
+    for c in ("officer", "director"):
+        events[c] = events[c].astype("boolean").fillna(False).astype(bool)
     events = events[events["symbol"].isin(set(members.columns))
                     & (events["known"] >= sessions[0] - pd.Timedelta(days=60))
                     & (events["known"] <= sessions[-1])].reset_index(drop=True)
@@ -86,6 +116,16 @@ def build(store, base_version: str, bundle: dict, sec_records: dict[str, dict], 
     gaps = [q for q in expected[:-1] if q not in sec_records]
     if gaps:
         fatal.append(f"SEC: quarters missing {gaps}")
+    earnings_share = None
+    if earnings_records:
+        e = events[events["kind"] == "earnings"]
+        yearly = e.groupby([e["symbol"], e["known"].dt.year]).size()
+        mem_years = [(t, y) for t, col in members.items() for y in sorted(set(col.index[col.to_numpy()].year))
+                     if y < sessions[-1].year]
+        earnings_share = float(np.mean([yearly.get((t, y), 0) >= 3 for t, y in mem_years])) if mem_years else 0.0
+        if earnings_share < MIN_EARNINGS_SHARE:
+            warnings.append(f"SEC: only {earnings_share:.1%} of member-years have 3+ earnings filings "
+                            f"(expected at least {MIN_EARNINGS_SHARE:.0%})")
     corr = _basket_corr(frames, members, base, store_benchmark="SPY")
     if corr is not None and corr < MIN_BASKET_CORR:
         warnings.append(f"S&P 500 member basket vs SPY daily correlation {corr:.3f} (min {MIN_BASKET_CORR})")
@@ -106,6 +146,8 @@ def build(store, base_version: str, bundle: dict, sec_records: dict[str, dict], 
                 "coverage": cov, "price_counts": counts, "insider": {
                     "purchase_rows": int(len(events)), "linked_issuers": int(links["issuer_cik"].nunique()),
                     "index_stocks_linked": share_linked, "quarters": sorted(sec_records)},
+                "earnings": {"events": int((events["kind"] == "earnings").sum()), "companies": len(earnings_records or {}),
+                             "member_years_with_3": earnings_share},
                 "basket_corr_spy": corr, "qc_fatal": fatal, "qc_warnings": warnings}
     (out / "manifest.json").write_text(json.dumps(manifest, indent=1, ensure_ascii=False, default=str),
                                        encoding="utf-8")

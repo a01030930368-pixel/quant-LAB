@@ -66,6 +66,7 @@ class InsiderClusterStrategy(Strategy):
         self.strategy_id, self.version = spec_id, spec_version_str
         self.cfg = dict(rules["insider"])
         self.park_symbol = self.cfg.get("park")  # idle equity, not a trade of the rule
+        self.excess_benchmark = "SPY"  # each trade is also compared with SPY held for the same days
         self.held: dict[str, int] = {}  # symbol -> sessions since its entry signal
         self.started = False
 

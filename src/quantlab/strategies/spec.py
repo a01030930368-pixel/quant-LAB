@@ -111,8 +111,9 @@ def check_schema(spec: Any) -> list[str]:
 
         if un["index"] not in INDEXES:
             p.append(f"universe.index must be one of {list(INDEXES)}")
-    if spec["rules"].get("insider") is not None and "index" not in un:
-        p.append("insider rules trade an index's stocks: set universe.index")
+    for block in ("insider", "earnings"):
+        if spec["rules"].get(block) is not None and "index" not in un:
+            p.append(f"{block} rules trade an index's stocks: set universe.index")
     if un["frequency"] != "daily":
         p.append("universe.frequency: only 'daily' is supported in this app version")
     if ex["signal_time"] != "close" or ex["fill"] != "next_open":
@@ -239,6 +240,10 @@ def load_spec(path: str | Path) -> LoadedSpec:
         symbols, rebalance = spec["universe"]["symbols"], spec["execution"]["rebalance"]
 
         def factory(**params):
+            if "earnings" in rules:
+                from quantlab.strategies.earnings import EarningsDriftStrategy
+
+                return EarningsDriftStrategy(spec_id=sid, spec_version_str=ver, rules=rules, **params)
             if "insider" in rules:
                 from quantlab.strategies.insider import InsiderClusterStrategy
 

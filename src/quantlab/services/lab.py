@@ -20,7 +20,7 @@ from typing import Any
 import pandas as pd
 import yaml
 
-from quantlab.analysis.trades import episodes, not_trades, trade_stats, without_best_year
+from quantlab.analysis.trades import episodes, excess_benchmark, not_trades, trade_stats, without_best_year
 from quantlab.backtesting.engine import BacktestResult, run_backtest
 from quantlab.core.hashing import stable_hash
 from quantlab.core.market_data import MarketData
@@ -58,7 +58,8 @@ def run_dev(factory, policy: dict, dev: MarketData, params: dict, qc_fatal: list
     m["sharpe_diff"] = m["strategy"]["sharpe"] - m["benchmark"]["sharpe"]
     ex = res.returns() - rf.reindex(res.equity.index).fillna(0.0)
     m["sr_period"] = M.sharpe(ex, annualize=False)
-    m["trades"] = trade_stats(episodes(res, dev, exclude=not_trades(strategy)))
+    m["trades"] = trade_stats(episodes(res, dev, exclude=not_trades(strategy),
+                                         excess_vs=excess_benchmark(strategy)))
     m["without_best_year"] = without_best_year(res.equity)
     return m, res, bench
 
@@ -280,7 +281,7 @@ class Lab:
     def ensure_index_dataset(self, base_version: str, start: str, say=None, refresh: bool = False) -> str:
         """S&P 500 dataset on top of the SPY/BIL dataset `base_version`: downloads the price bundle
         (once, or again with `refresh`) and the SEC quarters not yet stored, then builds or reuses."""
-        from quantlab.data import index_dataset, sec_insider, sp500
+        from quantlab.data import index_dataset, sec_earnings, sec_insider, sp500
 
         say = say or (lambda s: None)
         found = sp500.bundles(self.ws.root)
@@ -291,8 +292,13 @@ class Lab:
             raise RuntimeError("SEC 내부자 거래 자료를 받으려면 연락용 이메일이 필요합니다 (SEC 규칙). "
                                "백테스트 버튼을 다시 누르면 입력 창이 나옵니다.")
         sec_insider.download(self.ws.root, email, say=say)
-        version, manifest = index_dataset.build(self.data, base_version, found[-1], sec_insider.records(self.ws.root),
-                                                start, say)
+        sec_records = sec_insider.records(self.ws.root)
+        say("회사 목록 정리 중")
+        ciks = sorted(set(index_dataset.issuer_links(found[-1], sec_records)["issuer_cik"]))
+        sec_earnings.download(self.ws.root, email, ciks, say=say)
+        earnings = {c: m for c, m in sec_earnings.records(self.ws.root).items() if c in set(ciks)}
+        version, manifest = index_dataset.build(self.data, base_version, found[-1], sec_records, start, say,
+                                                earnings_records=earnings)
         if manifest["qc_fatal"]:
             say("품질 검사 치명 항목이 있습니다. 결과는 INVALID로 처리됩니다.")
         return version

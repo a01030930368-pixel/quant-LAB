@@ -1,0 +1,49 @@
+# Post-earnings drift in S&P 500 stocks (D-027). Fixed 2026-10-16 before any earnings-date data was
+# downloaded or read, by Claude or the app. Nothing is searched: one rule, one trial.
+# The stock prices (S&P 500 members since 2010) were seen by the user's earlier project and by
+# INS-CLUSTER; earnings filing dates were never used. The verdict reads the 2020+ holdout once.
+spec_version: 1
+strategy:
+  id: PEAD-SP500
+  version: 1.0.0
+  name: 실적 발표 후 크게 오른 종목 따라가기 (S&P 500, 30일 보유)
+  type: event
+  author: claude
+  parent: null
+  derived_after_holdout_view: false
+hypothesis:
+  class: theory
+  economic_rationale: >
+    Investors under-react to earnings news, so prices keep moving in the direction of the announcement
+    reaction for weeks (post-earnings-announcement drift; Ball & Brown 1968, Bernard & Thomas 1989;
+    drift after large announcement-day returns: Chan, Jegadeesh & Lakonishok 1996, Brandt et al. 2008).
+  expected_risks:
+    - the drift has weakened since the 2000s, above all in large, liquid stocks (Martineau 2021)
+    - signals bunch in earnings seasons, so the 20 slots can fill and later signals are skipped
+    - a 30-session hold carries the stock's market risk; the edge over SPY may be smaller than 0.6% round-trip costs
+  falsification: >
+    On the holdout (2020-01 onward), net Sharpe not above SPY buy-and-hold with block-bootstrap p < 0.10,
+    or max drawdown above 80% of SPY's. Trade level: mean return over SPY held for the same days at or
+    below the 0.6% round-trip cost.
+universe:
+  market: US_STOCK
+  index: SP500
+  symbols: [SPY, BIL]
+  frequency: daily
+rules:
+  kind: declarative
+  earnings:
+    min_abnormal: 0.05
+    hold_days: 30
+    slots: 20
+    park: SPY
+    park_band: 2
+execution:
+  signal_time: close
+  fill: next_open
+  rebalance: daily
+parameters: {}
+benchmark: SPY_buy_and_hold
+costs: {one_way_bps: 30}   # informational; the validation policy's costs are binding
+validation:
+  policy: pead_v1
