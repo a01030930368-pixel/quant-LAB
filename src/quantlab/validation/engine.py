@@ -19,7 +19,7 @@ from typing import Any, Callable
 import numpy as np
 import pandas as pd
 
-from quantlab.analysis.trades import episodes, not_trades, trade_stats, without_best_year
+from quantlab.analysis.trades import episodes, excess_benchmark, not_trades, trade_stats, without_best_year
 from quantlab.backtesting.engine import AccountingError, BacktestConfig, CostModel, run_backtest
 from quantlab.core.market_data import MarketData, total_return_index
 from quantlab.registry.store import Registry
@@ -230,7 +230,8 @@ def validate(make: StrategyFactory, params: dict, data: MarketData, policy_hash:
             metrics[f"dev_{k}"] = v
         both.pop("_returns")
         both["trades"] = trade_stats(episodes(dev_s, dev, sp["train"][0], sp["validation"][1],
-                                                    exclude=not_trades(probe)))
+                                                    exclude=not_trades(probe),
+                                                    excess_vs=excess_benchmark(probe)))
         both["without_best_year"] = without_best_year(_window(dev_s.equity, sp["train"][0], sp["validation"][1]))
         metrics["dev"] = both
         ok = both["sharpe_diff"] >= g2p["min_sharpe_diff"] or both["mdd_ratio"] <= g2p["max_mdd_ratio"]
@@ -252,7 +253,8 @@ def validate(make: StrategyFactory, params: dict, data: MarketData, policy_hash:
         full_b = run_backtest(BuyAndHold(policy["benchmark_symbol"]), data, _cfg(policy))
         ho = _compare(full_s.equity, full_b.equity, rf, full_s.trades, hs, he)
         rs, rb = ho.pop("_returns")
-        ho["trades"] = trade_stats(episodes(full_s, data, hs, he, exclude=not_trades(probe)))
+        ho["trades"] = trade_stats(episodes(full_s, data, hs, he, exclude=not_trades(probe),
+                                                    excess_vs=excess_benchmark(probe)))
         bp = g3p["bootstrap"]
         boot = M.block_bootstrap_sharpe_diff(rs, rb, rf, bp["block"], bp["n_boot"], bp["seed"])
         changes = _position_changes(full_s.signals, hs, he)

@@ -20,6 +20,11 @@ from quantlab.backtesting.engine import BacktestResult
 from quantlab.core.market_data import MarketData
 
 
+def excess_benchmark(strategy) -> str | None:
+    """Benchmark a strategy's trades are compared with one by one (`excess_benchmark`), if any."""
+    return getattr(strategy, "excess_benchmark", None)
+
+
 def not_trades(strategy) -> tuple:
     """Symbols a strategy declares as idle-equity parking (`park_symbol`), excluded from trade stats."""
     park = getattr(strategy, "park_symbol", None)
@@ -27,10 +32,12 @@ def not_trades(strategy) -> tuple:
 
 
 def episodes(res: BacktestResult, data: MarketData | None = None, start=None, end=None,
-             exclude=()) -> pd.DataFrame:
+             exclude=(), excess_vs: str | None = None) -> pd.DataFrame:
     """One row per episode entered within [start, end]: dates, sessions held, gross and net return.
 
     `exclude`: symbols whose holdings are not trades of the rule (idle equity parked in SPY).
+    `excess_vs`: a benchmark symbol; adds `bench` (its open-to-open return over the same dates,
+    dividends included) and `excess` (gross minus bench) per episode.
 
     Episodes still open at the end are marked at the last close (needs `data`; otherwise NaN).
     """
@@ -83,6 +90,23 @@ def episodes(res: BacktestResult, data: MarketData | None = None, start=None, en
                          "gross": (gross_out + d + mark) / gross_in - 1, "net": (net_out + d + mark) / net_in - 1,
                          "open_at_end": last is None})
     out = pd.DataFrame(rows, columns=["symbol", "entry", "exit", "sessions", "gross", "net", "open_at_end"])
+    if excess_vs is not None and data is not None and excess_vs in data.frames and len(out):
+        b = data.frames[excess_vs]
+        opn = b["open"].ffill()
+        close = b["close"].ffill()
+        div_cum = b["dividend"].fillna(0.0).cumsum()
+        last = cal[-1]
+
+        def bench(e, x):
+            open_end = x is None or pd.isna(x)
+            end_px = close.loc[last] if open_end else opn.loc[x]
+            end_day = last if open_end else x
+            # dividends with ex-dates after the entry fill and up to the exit fill (inclusive of exit open)
+            d = div_cum.loc[end_day] - div_cum.loc[e]
+            return float((end_px + d) / opn.loc[e] - 1)
+
+        out["bench"] = [bench(e, x) for e, x in zip(out["entry"], out["exit"])]
+        out["excess"] = out["gross"] - out["bench"]
     if start is not None:
         out = out[out["entry"] >= pd.Timestamp(start)]
     if end is not None:
@@ -112,7 +136,21 @@ def trade_stats(ep: pd.DataFrame) -> dict:
         "mean_sessions": float(ep["sessions"].mean()),
         "best": float(g.max()),
         "worst": float(g.min()),
+        **_excess_stats(ep),
     }
+
+
+def _excess_stats(ep: pd.DataFrame) -> dict:
+    """Return over the benchmark held for the same dates (when `episodes` was given `excess_vs`)."""
+    if "excess" not in ep:
+        return {}
+    x = ep["excess"].to_numpy(float)
+    by_day = ep.groupby("entry")["excess"].mean().to_numpy()
+    k = len(by_day)
+    sd = float(np.std(by_day, ddof=1)) if k > 1 else float("nan")
+    return {"mean_bench": float(ep["bench"].mean()), "mean_excess": float(x.mean()),
+            "median_excess": float(np.median(x)), "win_rate_excess": float((x > 0).mean()),
+            "t_excess_day_clustered": float(by_day.mean() / (sd / math.sqrt(k))) if k > 1 and sd > 0 else None}
 
 
 def without_best_year(equity: pd.Series) -> dict:

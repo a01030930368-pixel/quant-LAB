@@ -124,6 +124,10 @@ class MarketView:
         hi = np.searchsorted(known, np.datetime64(now, "ns"), side="right")
         return {c: cache[c][lo:hi] for c in columns}
 
+    def session(self, back: int) -> pd.Timestamp | None:
+        """Date of the session `back` sessions before now (0 = now); the calendar is public."""
+        return self._data.calendar[self._t - back] if 0 <= back <= self._t else None
+
     def previous_session(self) -> pd.Timestamp | None:
         return self._data.calendar[self._t - 1] if self._t > 0 else None
 

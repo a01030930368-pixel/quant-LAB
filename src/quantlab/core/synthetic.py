@@ -78,7 +78,7 @@ def universe_market(symbols, seed: int = 0, n: int = 1500, start="2010-01-01") -
 
 
 def index_market(symbols, seed: int = 0, n: int = 1500, n_stocks: int = 30, start="2010-01-01") -> MarketData:
-    """Random stock index with membership and insider-purchase events (smoke tests of index specs).
+    """Random stock index with membership, insider-purchase and earnings events (smoke tests of index specs).
 
     Stocks are named S00, S01, ...; each is a member for one random span. Events are random filings
     by a few insiders per stock, officers or directors, some below any sensible value threshold."""
@@ -101,5 +101,9 @@ def index_market(symbols, seed: int = 0, n: int = 1500, n_stocks: int = 30, star
                          "owner": f"{s}-{int(rng.integers(5))}", "value": float(rng.choice([5e3, 5e4, 5e5])),
                          "officer": bool(rng.random() < 0.6), "director": bool(rng.random() < 0.6),
                          "kind": "insider_buy"})
-    events = pd.DataFrame(rows).sort_values(["known", "symbol", "owner"], kind="stable").reset_index(drop=True)
+    for s in stocks:  # quarterly earnings filings
+        for day in cal[int(rng.integers(0, 60))::63]:
+            rows.append({"known": day, "symbol": s, "owner": None, "value": float("nan"),
+                         "officer": False, "director": False, "kind": "earnings"})
+    events = pd.DataFrame(rows).sort_values(["known", "symbol"], kind="stable").reset_index(drop=True)
     return data.with_tables(members, events)

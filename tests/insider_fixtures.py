@@ -84,3 +84,33 @@ def bundle_frames(sessions: pd.DatetimeIndex, spans: dict[str, tuple], seed=3, c
                                   "volume": 1e6, "adj_close": adj, "dividends": 0.0, "stock_splits": 0.0,
                                   "source": "crsp" if t in crsp else "yahoo"}))
     return pd.concat(rows, ignore_index=True)
+
+
+def store_submissions(root: Path, companies: dict[str, list[tuple]], page_size: int = 3) -> None:
+    """companies: cik -> [(filingDate, form, items)]. Older filings go to extra pages, as for big filers."""
+    import gzip
+
+    from quantlab.data import sec_earnings
+
+    d = sec_earnings.store_dir(root)
+    d.mkdir(parents=True, exist_ok=True)
+    for cik, filings in companies.items():
+        filings = sorted(filings, key=lambda f: f[0], reverse=True)
+
+        def cols(rows, start):
+            return {"accessionNumber": [f"{cik}-{start + i}" for i in range(len(rows))],
+                    "filingDate": [r[0] for r in rows], "form": [r[1] for r in rows], "items": [r[2] for r in rows],
+                    "acceptanceDateTime": [f"{r[0]}T16:05:00.000Z" for r in rows]}
+
+        recent, older = filings[:page_size], filings[page_size:]
+        pages_older = [older[i:i + page_size] for i in range(0, len(older), page_size)]
+        main = {"cik": cik, "filings": {"recent": cols(recent, 0),
+                                        "files": [{"name": f"CIK{int(cik):010d}-submissions-{k:03d}.json"}
+                                                  for k in range(len(pages_older))]}}
+        pages = [main] + [cols(p, 1000 * (k + 1)) for k, p in enumerate(pages_older)]
+        path = d / f"CIK{int(cik):010d}.json.gz"
+        with gzip.open(path, "wb") as g:
+            g.write(json.dumps(pages).encode())
+        meta = {"cik": cik, "sha256": file_sha256(path), "pages": len(pages), "path": str(path),
+                "fetched_at": "20261016T000000000000Z"}
+        (d / f"CIK{int(cik):010d}.meta.json").write_text(json.dumps(meta), encoding="utf-8")

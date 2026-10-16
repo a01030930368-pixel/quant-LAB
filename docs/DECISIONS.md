@@ -313,3 +313,22 @@ names included, and the SEC's insider filings.
   (0.25% + 0.05% one way) and gates. The stock prices were seen by the user's earlier project; insider
   filings were never used there.
 - SPY holdings of a strategy that declares a `park_symbol` are not counted as trades of the rule.
+
+## D-027 · 2026-10-16 · Post-earnings drift in S&P 500 stocks (study B)
+
+INS-CLUSTER's TRAIN+VALIDATION backtest (EXP-20261016-901f30e428) found no edge: 707 trades, +1.12%
+gross per trade, but SPY gained +0.88% over the same 20 sessions (excess +0.23%, t 0.8), below the
+0.6% round-trip cost; CAGR 6.1% vs SPY 12.3%. Its holdout was not read. The user chose study B next.
+- Earnings dates: original Form 8-K filings listing item 2.02, from the SEC submissions API (one JSON per
+  company, older pages included), for the companies linked to index tickers through their Form 4s.
+  Only the filing date is used; the reaction window covers the filing-date session and the next one,
+  so the release time (before, during or after the session) does not matter.
+- PEAD-SP500 1.0.0, fixed before any earnings-date data was read: the stock's return minus SPY's
+  from the last close before the filing date to the close of the first session after it is +5% or
+  more; the stock is an S&P 500 member that day and not held. Buy at the next open with 1/20 of
+  equity, sell 30 sessions later; larger abnormal return first when slots are short. One rule, no search.
+- Idle equity stays in SPY, but cash from exits goes back into SPY only once two slots' worth is idle
+  (`park_band`): INS-CLUSTER's per-event SPY resizing cost about as much as its stock trades.
+- Event strategies report each trade's return over SPY held for the same days (`mean_excess`,
+  `t_excess_day_clustered`), the first number to read: below the round-trip cost there is no edge.
+- Policy `pead_v1`: same splits, costs and gates as `ins_cluster_v1`.

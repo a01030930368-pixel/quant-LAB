@@ -5,13 +5,13 @@ import pandas as pd
 import pytest
 
 from quantlab.core.market_data import MarketData
-from quantlab.data import sec_insider
+from quantlab.data import sec_earnings, sec_insider
 from quantlab.data.quality import exchange_sessions
 from quantlab.services.lab import Lab, builtin_path
 from quantlab.strategies.insider import InsiderClusterStrategy
 from quantlab.strategies.spec import load_spec
 from quantlab.backtesting.engine import run_backtest
-from insider_fixtures import bundle_frames, store_bundle, store_sec, write_quarter_zip
+from insider_fixtures import bundle_frames, store_bundle, store_sec, store_submissions, write_quarter_zip
 from synthetic import frame
 
 SPEC = builtin_path("specs", "INS-CLUSTER.qls.yaml")
@@ -54,6 +54,25 @@ def make_filings(sessions):
     return filings
 
 
+def earnings_calendar(sessions):
+    """Quarterly 8-K item 2.02 filings per company (some on weekends), noise filings, and which
+    announcements get a +8% reaction."""
+    rng = np.random.default_rng(21)
+    companies, jumps = {}, []
+    for t, cik in CIK.items():
+        rows = []
+        for q in pd.date_range("2009-07-20", "2021-10-31", freq="QS-JAN"):
+            day = q + pd.Timedelta(days=int(rng.integers(15, 40)))
+            rows.append((str(day.date()), "8-K", "2.02,9.01"))
+            rows.append((str((day + pd.Timedelta(days=1)).date()), "8-K/A", "2.02"))   # amendment: ignored
+            rows.append((str((day + pd.Timedelta(days=9)).date()), "8-K", "7.01"))     # other item: ignored
+            last = {"DEAD-201506": pd.Timestamp("2015-06-01")}.get(t, sessions[-1])
+            if rng.random() < 0.3 and day < last - pd.Timedelta(days=10):
+                jumps.append((t, day))
+        companies[cik] = rows
+    return companies, jumps
+
+
 @pytest.fixture(scope="module")
 def lab(tmp_path_factory):
     tmp = tmp_path_factory.mktemp("ins")
@@ -71,17 +90,24 @@ def lab(tmp_path_factory):
     spans["DEAD-201506"] = ("2009-06-01", "2015-06-30")
     spans["DEAD"] = ("2018-01-02", "2021-12-31")
     prices = bundle_frames(sessions, spans, crsp=("DEAD-201506",))
+    companies, jumps = earnings_calendar(sessions)
+    for t, day in jumps:  # the market's reaction: +8% from the first session after the filing date
+        nxt = sessions[sessions > day][0]
+        m = (prices["ticker"] == t) & (prices["date"] >= nxt)
+        prices.loc[m, ["open", "high", "low", "close", "adj_close"]] *= 1.08
     first = STOCKS[:10] + ["META", "DEAD-201506"]
     members = pd.concat([pd.DataFrame({"date": pd.Timestamp("2009-12-31"), "ticker": first}),
                          pd.DataFrame({"date": pd.Timestamp("2015-07-01"),
                                        "ticker": STOCKS + ["META"]})], ignore_index=True)
     store_bundle(lab.ws.root, prices, members)
     store_sec(lab.ws.root, make_filings(sessions))
+    store_submissions(lab.ws.root, companies)
     lab.set_sec_email("someone@example.com")
-    sec_insider_download = sec_insider.download
+    saved = sec_insider.download, sec_earnings.download
     sec_insider.download = lambda *a, **k: {"fetched": [], "missing": []}  # no network in tests
+    sec_earnings.download = lambda *a, **k: {"fetched": [], "missing": []}
     yield lab
-    sec_insider.download = sec_insider_download
+    sec_insider.download, sec_earnings.download = saved
     lab.close()
 
 
@@ -99,8 +125,8 @@ def test_dataset_links_filings_to_tickers_point_in_time(built):
     assert m["kind"] == "index" and m["qc_fatal"] == [], m["qc_fatal"]
     assert m["coverage"]["share"] > 0.999
     assert set(data.members.columns) == set(STOCKS + ["META", "DEAD-201506"])  # NOTM never a member
-    ev = data.events
-    assert ev["known"].is_monotonic_increasing
+    assert data.events["known"].is_monotonic_increasing
+    ev = data.events[data.events["kind"] == "insider_buy"]
     # FB filings (2012) reach META through the issuer's CIK
     assert ((ev["symbol"] == "META") & (ev["known"] == "2012-06-04")).sum() == 2
     # the delisted member keeps its own filings; the later company reusing "DEAD" maps to nothing here
@@ -215,4 +241,98 @@ def test_events_after_the_bar_are_invisible():
     data = small_market([("2020-01-06", "X", "o1", 20000, True, False), ("2020-01-09", "X", "o2", 20000, True, False),
                          ("2020-02-03", "Y", "p1", 20000, True, False), ("2020-02-04", "Y", "p2", 20000, True, False)])
     make = lambda **p: InsiderClusterStrategy(spec_id="T", spec_version_str="1", rules=RULES)  # noqa: E731
+    assert leak_test(make, {}, data, cutpoints=4, seed=1) == []
+
+
+# --- post-earnings drift (D-027) --------------------------------------------------------------
+PEAD = builtin_path("specs", "PEAD-SP500.qls.yaml")
+
+
+def test_earnings_events_come_from_original_8k_item_202(built):
+    _, data, m = built
+    e = data.events[data.events["kind"] == "earnings"]
+    assert m["earnings"]["events"] == len(e) > 0
+    assert m["earnings"]["member_years_with_3"] > 0.9
+    per = e.groupby([e["symbol"], e["known"].dt.to_period("Q")]).size()
+    assert per.max() == 1  # amendments and other 8-K items are not announcements
+    assert "META" in set(e["symbol"]) and "DEAD-201506" in set(e["symbol"])
+    assert e.loc[e["symbol"] == "DEAD-201506", "known"].max() <= pd.Timestamp("2015-06-30")
+    # insider rows are unchanged by the earnings rows
+    assert not data.events.loc[data.events["kind"] == "insider_buy", "officer"].isna().any()
+
+
+def test_pead_backtest_reports_return_over_spy(lab, built):
+    bt = lab.quick_backtest(PEAD)
+    e = lab.registry.experiment(bt.experiment_id)
+    t = e["metrics"]["trades"]
+    assert e["metrics"]["window"][1] == "2019-12-31" and t["n"] > 30
+    assert {"mean_excess", "t_excess_day_clustered", "mean_bench"} <= set(t)
+    _, data, _ = built
+    tr = bt.result.trades
+    buys = tr[(tr["qty"] > 0) & (tr["symbol"] != "SPY")]
+    ev = data.events[data.events["kind"] == "earnings"]
+    for _, b in buys.iterrows():
+        i = data.calendar.get_loc(b["date"])
+        signal, before = data.calendar[i - 1], data.calendar[i - 2]
+        # an announcement filed on the session before the signal, or between it and the signal session
+        assert ((ev["symbol"] == b["symbol"]) & (ev["known"] >= before) & (ev["known"] < signal)).any()
+        assert data.members.loc[signal, b["symbol"]]
+    # SPY parking moves less money than the positions do (cash from exits waits for park_band slots)
+    spy_notional = tr.loc[tr["symbol"] == "SPY", "notional"].abs().sum()
+    assert spy_notional < tr.loc[tr["symbol"] != "SPY", "notional"].abs().sum()
+    assert lab.registry.holdout_ledger() == [] or all(r["strategy_family"] != "PEAD-SP500"
+                                                     for r in lab.registry.holdout_ledger())
+
+
+EARN = {"earnings": {"min_abnormal": 0.05, "hold_days": 5, "slots": 2, "park": "SPY", "park_band": 2}}
+
+
+def earn_market(filings, jump_after=None):
+    from quantlab.strategies.earnings import EarningsDriftStrategy  # noqa: F401
+
+    idx = pd.bdate_range("2020-01-01", periods=60)
+    frames = {}
+    for s in ("SPY", "X", "Y"):
+        c = np.full(len(idx), 100.0)
+        if s in (jump_after or {}):
+            c[idx > pd.Timestamp(jump_after[s])] *= 1.10
+        f = frame(c, c)
+        f.index = idx
+        frames[s] = f
+    members = pd.DataFrame(True, index=idx, columns=["X", "Y"])
+    ev = pd.DataFrame({"known": pd.to_datetime([d for d, _ in filings]), "symbol": [s for _, s in filings],
+                       "kind": "earnings"}).sort_values("known", kind="stable").reset_index(drop=True)
+    return MarketData(idx, frames, members, ev)
+
+
+def earn_buys(data):
+    from quantlab.strategies.earnings import EarningsDriftStrategy
+
+    res = run_backtest(EarningsDriftStrategy(spec_id="T", spec_version_str="1", rules=EARN), data)
+    t = res.trades
+    return t[t["symbol"] != "SPY"]
+
+
+def test_earnings_signal_reads_the_two_session_reaction_and_fills_next_open():
+    # filed Tue 2020-01-07 after the close; +10% on Wed; signal at Wed close, buy Thu open, sell 5 sessions later
+    t = earn_buys(earn_market([("2020-01-07", "X")], {"X": "2020-01-07"}))
+    assert list(t["date"].dt.strftime("%Y-%m-%d")) == ["2020-01-09", "2020-01-16"]
+    # filed on Saturday 2020-01-11, +10% on Monday: one-session window, buy Tuesday
+    t = earn_buys(earn_market([("2020-01-11", "Y")], {"Y": "2020-01-10"}))
+    assert list(t["date"].dt.strftime("%Y-%m-%d"))[:1] == ["2020-01-14"]
+
+
+def test_earnings_signal_needs_the_abnormal_move_and_ignores_later_news():
+    assert earn_buys(earn_market([("2020-01-07", "X")])).empty                       # no reaction
+    assert earn_buys(earn_market([("2020-01-07", "X")], {"X": "2020-01-20"})).empty  # move weeks later
+    both = earn_market([("2020-01-07", "X")], {"X": "2020-01-07", "SPY": "2020-01-07"})
+    assert earn_buys(both).empty                                                    # the market moved too
+
+
+def test_earnings_events_after_the_bar_are_invisible():
+    from quantlab.strategies.earnings import EarningsDriftStrategy
+    from quantlab.validation.engine import leak_test
+
+    data = earn_market([("2020-01-07", "X"), ("2020-02-04", "Y")], {"X": "2020-01-07", "Y": "2020-02-04"})
+    make = lambda **p: EarningsDriftStrategy(spec_id="T", spec_version_str="1", rules=EARN)  # noqa: E731
     assert leak_test(make, {}, data, cutpoints=4, seed=1) == []
