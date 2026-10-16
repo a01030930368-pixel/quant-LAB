@@ -79,7 +79,7 @@ class AutoPage(Page):
         self.body.addWidget(label(
             "앱이 재료(진입 신호·추세 조건·청산 규칙·보유 기간·손절·익절)를 조합해 TRAIN+VALIDATION 구간에서만 시험하고, "
             "걸러내는 기준을 모두 통과한 조합만 후보로 남깁니다. 시험한 개수만큼 통과 기준(t값)이 높아집니다. "
-            "최종 평가(2017년 이후 보류 구간)는 앱이 스스로 열지 않습니다.", "muted", wrap=True))
+            "최종 평가(맨 뒤 보류 구간)는 앱이 스스로 열지 않습니다.", "muted", wrap=True))
 
         seg = QHBoxLayout()
         seg.setSpacing(0)
@@ -162,6 +162,7 @@ class AutoPage(Page):
         cand.lay.addWidget(hline())
         self.cands = self._table(self.COLS)
         self.cands.setItemDelegate(KeepColors(self.cands))
+        self.cands.itemSelectionChanged.connect(self._buttons)
         cand.lay.addWidget(self.cands)
         self.cand_note = label("", "muted", wrap=True)
         cand.lay.addWidget(self.cand_note)
@@ -286,12 +287,12 @@ class AutoPage(Page):
                     cell(pct(r.get("net"), True)), cell(pct(r.get("cagr"), True)),
                     cell(f"{r['sharpe']:.2f}" if r.get("sharpe") is not None else "—"), cell(pct(r.get("mdd"))),
                     cell(f"{r['t']:.2f}" if r.get("t") is not None else "—"), cell(r.get("neighbours", "—")),
-                    cell(r["status"], theme.OK if r["status"] == "후보" else theme.ACCENT, mono=False)]
+                    cell(r["status"], theme.OK if r["status"] == "후보" or r.get("preregistered") else theme.ACCENT, mono=False)]
             for j, it in enumerate(vals):
                 self.cands.setItem(i, j, it)
         self.cands.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.csv_btn.setVisible(self.near_mode)
-        self.final_btn.setVisible(not self.near_mode)
+        self.final_btn.setVisible(not self.near_mode or any(r.get("preregistered") for r in rows))
         if self.near_mode:
             total = len(s.get("near") or [])
             by = "샤프" if s.get("beat_metric") == "sharpe" else "연수익"
@@ -300,7 +301,7 @@ class AutoPage(Page):
                 "아직 없습니다." if not total else
                 f"앞의 네 기준(거래 수·거래당 수익·두 구간 이익·비용 2배)은 통과했지만 SPY 비교나 그 뒤 기준에서 떨어진 조합입니다. "
                 f"{by}이 높은 순서입니다. 아이디어를 얻는 용도로만 보세요. 수천 개 중에 골라내면 운 좋은 조합을 집기 쉬워서, "
-                "여기서는 최종 평가를 할 수 없습니다.")
+                "여기서는 최종 평가를 할 수 없습니다. 맨 위 '사전 고정' 조합만 예외입니다 (미리 정해 둔 하나).")
         else:
             reads = s.get("holdout_reads", 0)
             self.cand_head.setText(f"{len(rows)}개")
@@ -324,7 +325,8 @@ class AutoPage(Page):
     def _buttons(self) -> None:
         has = self.cands.rowCount() > 0
         self.view_btn.setEnabled(has and not self.win.runner.busy)
-        self.final_btn.setEnabled(has and not self.near_mode and not self.win.runner.busy)
+        self.final_btn.setEnabled(has and not self.win.runner.busy
+                                  and (not self.near_mode or bool((self._selected() or {}).get("preregistered"))))
         self.csv_btn.setEnabled(bool((self.summary or {}).get("near")))
         self.start_btn.setEnabled(not self.running)
         self.stop_btn.setEnabled(self.running)
@@ -436,18 +438,25 @@ class AutoPage(Page):
 
         self.win.runner.start("후보 백테스트", lambda p: self.lab.auto_search().open_candidate(group, c["params"]), done)
 
+    def _selected(self) -> dict | None:
+        rows = self._rows()
+        r = self.cands.currentRow()
+        return rows[r] if 0 <= r < len(rows) else (rows[0] if rows else None)
+
     def final_candidate(self) -> None:
-        if self.near_mode:
-            return
         c = self._chosen()
+        if c and self.near_mode and not c.get("preregistered"):
+            self.win.notify("이 목록에서는 '사전 고정' 조합만 최종 평가할 수 있습니다.")
+            return
         if not c:
             return
         s = self.summary or {}
         reads = s.get("holdout_reads", 0)
-        text = (f"{self.group} 후보를 최종 평가합니다.\n\n규칙: {c['rule']}\n"
+        what = "미리 고정해 둔 조합(정식 후보 아님)" if c.get("preregistered") else "후보"
+        text = (f"{self.group} {what}을 최종 평가합니다.\n\n규칙: {c['rule']}\n"
                 f"이 묶음 누적 시험: {s.get('family_trials', 0):,}개 (판정의 보정에 반영)\n"
                 f"이 묶음의 이전 보류 구간 열람: {reads}회\n\n"
-                "2017년 이후 보류 구간을 한 번 읽습니다. 이 묶음에서는 후보 하나만 최종 평가하는 것이 원칙이고, "
+                f"{str(s.get('holdout_start', ''))[:4]}년 이후 보류 구간을 한 번 읽습니다. 이 묶음에서는 후보 하나만 최종 평가하는 것이 원칙이고, "
                 "두 번째부터는 PASS가 될 수 없습니다. 진행할까요?")
         if not self.win.ask(text):
             return

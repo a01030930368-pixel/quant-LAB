@@ -221,3 +221,27 @@ def test_auto_page_lists_near_misses_and_saves_them(win, tmp_path, monkeypatch):
     assert rows[0][0] == "규칙" and len(rows) == len(near) + 1 and rows[1][0] == "규칙 0"
     page.show_near(False)
     assert page.cands.rowCount() == 0 and not page.final_btn.isEnabled()
+
+
+def test_auto_page_final_only_for_the_preregistered_near_miss(win, monkeypatch):
+    win.go("자동 탐색")
+    page = win.auto
+    base = {"fail": "tvalue", "n": 50, "gross": 0.02, "net": 0.01, "cagr": 0.15, "sharpe": 0.8, "mdd": -0.2, "t": 2.4}
+    near = [dict(base, params={"k": 0}, rule="고정", status="사전 고정 (최종 평가 가능)", preregistered=True),
+            dict(base, params={"k": 1}, rule="다른 것", status="시험 개수 대비 통계 강도 부족", preregistered=False)]
+    s = {"group": page.group, "done": 2, "grid": 2, "family_trials": 2, "t_required": 4.0, "beat_metric": "cagr",
+         "beat_value": 0.1, "pending": 0, "funnel": [], "candidates": [], "near": near, "holdout_reads": 0,
+         "holdout_start": "2020-01-01"}
+    page._show(s)
+    page.show_near(True)
+    page.cands.selectRow(0)
+    assert page.final_btn.isEnabled()
+    page.cands.selectRow(1)
+    assert not page.final_btn.isEnabled()
+    asked = []
+    monkeypatch.setattr(win, "ask", lambda text: asked.append(text) or False)
+    page.final_candidate()
+    assert asked == []
+    page.cands.selectRow(0)
+    page.final_candidate()
+    assert len(asked) == 1 and "미리 고정" in asked[0] and "2020년 이후" in asked[0]

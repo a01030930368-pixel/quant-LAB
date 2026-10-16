@@ -60,6 +60,13 @@ FILTERS = [
 ]
 FILTER_LABEL = dict(FILTERS)
 SPY_SHARPE_LABEL = "SPY 보유보다 낮은 샤프 (위험 대비 수익)"
+# one near miss per holdout fixed in advance by the user's decision (D-024): it may have the final
+# evaluation although it is not a candidate. Fixed before the holdout was read; never change it.
+PREREGISTERED = {
+    "AUTO-LEVP": {"entry": "ret5_15", "exit": "rsi2_70", "filter": "down200", "max_hold": 5, "stop": 0.2, "take": 0.1},
+}
+PREREGISTERED_LABEL = "사전 고정 (최종 평가 가능)"
+
 # the cheap filters; a trial past them counts as a near miss when it fails a later one
 EARLY_FILTERS = ("trades", "gross", "splits", "cost2x")
 
@@ -439,10 +446,12 @@ class AutoSearch:
                 if fail not in EARLY_FILTERS:
                     if "rule" not in v:
                         v["rule"] = combo.describe(v["params"])
-                    near.append({**m, "params": v["params"], "rule": v["rule"], "fail": fail,
-                                 "status": spy_label if fail == "spy" else FILTER_LABEL[fail]})
+                    pre_reg = PREREGISTERED.get(group) == v["params"]
+                    near.append({**m, "params": v["params"], "rule": v["rule"], "fail": fail, "preregistered": pre_reg,
+                                 "status": PREREGISTERED_LABEL if pre_reg else
+                                 spy_label if fail == "spy" else FILTER_LABEL[fail]})
         rows.sort(key=lambda r: -(r.get("t") or 0))
-        near.sort(key=lambda r: -math.inf if r.get(metric) is None else -r[metric])
+        near.sort(key=lambda r: (not r["preregistered"], -math.inf if r.get(metric) is None else -r[metric]))
         grid_size = len(self._keyed_order(loaded, policy))
         done = sum(1 for v in known.values() if v["status"] == "done")
         reads = self.holdout_reads(group)
@@ -454,7 +463,7 @@ class AutoSearch:
                 "beat_metric": metric, "beat_value": beat, "beat_cagr": self.beat_value(group, "cagr"),
                 "funnel": [{"code": c, "label": spy_label if c == "spy" else lbl,
                             "count": funnel[c]} for c, lbl in FILTERS],
-                "candidates": rows, "near": near, "holdout_reads": reads}
+                "candidates": rows, "near": near, "holdout_start": str(policy["splits"]["holdout"][0]), "holdout_reads": reads}
 
     # --- a candidate -----------------------------------------------------------------
     def open_candidate(self, group: str, params: dict):
