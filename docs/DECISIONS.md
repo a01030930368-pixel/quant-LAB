@@ -256,3 +256,18 @@ Sharpe check.
   `beat_metric`. The page shows the top 500; "CSV로 저장" writes all of them.
 - A near miss can be backtested on TRAIN+VALIDATION like a candidate, but it cannot be sent to the
   final evaluation: picking the best of thousands that failed would be selection on noise.
+
+## D-024 · 2026-10-16 · One pre-fixed near miss may read the 3x holdout
+
+AUTO-LEV and AUTO-LEVP tried all 684,000 combinations with no candidate. In AUTO-LEVP, 1,840
+combinations beat SPY's CAGR and passed every filter but the t threshold (best t 3.4, needed about
+5.3). Their entries cluster: "5-day return below -15%" (560, 17x its share) and "3 down days"
+(407, 12.6x); filters, exits, stops and takes are spread evenly. The same oversold-rebound theme
+was the one survivor (N4) of the earlier project.
+- The user chose to spend the shared LEV/LEVP holdout (2020+) on one rule fixed before it is read.
+- The rule was fixed by a stated principle, not by the best t: the most frequent entry (ret5_15),
+  then the most frequent value of every other setting among that entry's 560 t-only near misses:
+  `ret5_15 · down200 · rsi2_70 · max_hold 5 · stop 20% · take 10%` (dev: CAGR 14.7%, MDD -27%,
+  99 trades, t 2.4). It is `PREREGISTERED["AUTO-LEVP"]` and must not change.
+- It is not a candidate. The final evaluation runs as usual (DSR over the family's 684,000 trials),
+  and is read as a check of the theme, not as an adoption. After it, neither group can read the holdout.

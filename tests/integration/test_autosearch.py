@@ -321,3 +321,22 @@ def test_near_misses_are_listed_best_first(lab, monkeypatch):
     assert {r["status"] for r in near} <= {A.FILTER_LABEL["spy"], A.FILTER_LABEL["mdd"]}
     vals = [r["cagr"] for r in near]
     assert vals == sorted(vals, reverse=True)
+
+
+def test_preregistered_near_miss_comes_first(lab, monkeypatch):
+    lab.auto.run(GROUP, workers=1, limit=6)
+    monkeypatch.setattr(A, "_STATE", {})
+    monkeypatch.setattr(A, "first_failure", lambda m, auto, beat, t_req: "tvalue")
+    params = list(lab.auto.trials(GROUP).values())[-1]["params"]
+    monkeypatch.setattr(A, "PREREGISTERED", {GROUP: params})
+    out = lab.auto.summary(GROUP)
+    assert out["near"][0]["params"] == params and out["near"][0]["preregistered"]
+    assert out["near"][0]["status"] == A.PREREGISTERED_LABEL
+    assert sum(r["preregistered"] for r in out["near"]) == 1
+    assert out["holdout_start"].startswith("20")
+
+
+def test_levp_preregistered_rule_is_in_its_catalog():
+    p = A.PREREGISTERED["AUTO-LEVP"]
+    space = combo.full_space(2)
+    assert set(p) == set(space) and all(p[k] in space[k] for k in space)
