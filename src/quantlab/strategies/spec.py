@@ -106,6 +106,13 @@ def check_schema(spec: Any) -> list[str]:
         p.append("hypothesis.class must be theory or data_mining (protocol 제4조)")
     if not isinstance(un["symbols"], list) or not all(isinstance(s, str) for s in un["symbols"]):
         p.append("universe.symbols must be a list of tickers")
+    if "index" in un:
+        from quantlab.strategies.insider import INDEXES
+
+        if un["index"] not in INDEXES:
+            p.append(f"universe.index must be one of {list(INDEXES)}")
+    if spec["rules"].get("insider") is not None and "index" not in un:
+        p.append("insider rules trade an index's stocks: set universe.index")
     if un["frequency"] != "daily":
         p.append("universe.frequency: only 'daily' is supported in this app version")
     if ex["signal_time"] != "close" or ex["fill"] != "next_open":
@@ -232,6 +239,10 @@ def load_spec(path: str | Path) -> LoadedSpec:
         symbols, rebalance = spec["universe"]["symbols"], spec["execution"]["rebalance"]
 
         def factory(**params):
+            if "insider" in rules:
+                from quantlab.strategies.insider import InsiderClusterStrategy
+
+                return InsiderClusterStrategy(spec_id=sid, spec_version_str=ver, rules=rules, **params)
             if "combo" in rules:
                 from quantlab.strategies.combo import build_rules
                 from quantlab.strategies.entry_exit import EntryExitStrategy

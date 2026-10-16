@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from quantlab.backtesting.engine import run_backtest
-from quantlab.core.synthetic import universe_market
+from quantlab.core.synthetic import index_market, universe_market
 from quantlab.registry.store import Registry
 from quantlab.strategies.spec import LoadedSpec, SpecError, load_spec
 from quantlab.validation.engine import isolation_check, leak_test
@@ -34,7 +34,7 @@ def preflight(loaded: LoadedSpec) -> list[str]:
     """Smoke test and leak checks on synthetic data (no market data needed)."""
     problems: list[str] = []
     symbols = loaded.spec["universe"]["symbols"]
-    data = universe_market(symbols, seed=1)
+    data = index_market(symbols, seed=1) if "index" in loaded.spec["universe"] else universe_market(symbols, seed=1)
     params = loaded.default_params
     try:
         probe = loaded.factory(**params)

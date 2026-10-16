@@ -20,8 +20,17 @@ from quantlab.backtesting.engine import BacktestResult
 from quantlab.core.market_data import MarketData
 
 
-def episodes(res: BacktestResult, data: MarketData | None = None, start=None, end=None) -> pd.DataFrame:
+def not_trades(strategy) -> tuple:
+    """Symbols a strategy declares as idle-equity parking (`park_symbol`), excluded from trade stats."""
+    park = getattr(strategy, "park_symbol", None)
+    return (park,) if park else ()
+
+
+def episodes(res: BacktestResult, data: MarketData | None = None, start=None, end=None,
+             exclude=()) -> pd.DataFrame:
     """One row per episode entered within [start, end]: dates, sessions held, gross and net return.
+
+    `exclude`: symbols whose holdings are not trades of the rule (idle equity parked in SPY).
 
     Episodes still open at the end are marked at the last close (needs `data`; otherwise NaN).
     """
@@ -32,6 +41,8 @@ def episodes(res: BacktestResult, data: MarketData | None = None, start=None, en
     divs = cf[cf["kind"] == "dividend"] if len(cf) else cf
     rows = []
     for sym in sh.columns:
+        if sym in exclude:
+            continue
         held = sh[sym].to_numpy() > 1e-12
         if not held.any():
             continue

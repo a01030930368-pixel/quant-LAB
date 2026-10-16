@@ -82,6 +82,51 @@ class MarketView:
         v = arr[self._t]
         return float(v) if np.isfinite(v) else None
 
+    def is_member(self, symbol: str) -> bool:
+        """Index membership today (True when the data carries no membership table)."""
+        m = self._data.members
+        if m is None:
+            return True
+        return bool(m[symbol].iat[self._t]) if symbol in m.columns else False
+
+    def events(self, days: int) -> pd.DataFrame:
+        """Events that became public in the last `days` calendar days, today included (a copy).
+
+        `known` is a calendar date; a fact dated on a weekend or holiday shows up at the next bar."""
+        ev = self._data.events
+        if ev is None:
+            return pd.DataFrame(columns=["known", "symbol"])
+        known = self._data.__dict__.get("_events_known")
+        if known is None:
+            known = ev["known"].to_numpy(dtype="datetime64[ns]")
+            self._data.__dict__["_events_known"] = known
+        now = self.now
+        lo = np.searchsorted(known, np.datetime64(now - pd.Timedelta(days=days - 1), "ns"), side="left")
+        hi = np.searchsorted(known, np.datetime64(now, "ns"), side="right")
+        return ev.iloc[lo:hi].copy()
+
+    def event_columns(self, days: int, columns: tuple[str, ...]) -> dict[str, np.ndarray]:
+        """Same rows as `events(days)`, as read-only arrays of the named columns that exist (fast path)."""
+        ev = self._data.events
+        if ev is None:
+            return {"known": np.array([], dtype="datetime64[ns]")}
+        columns = ("known",) + tuple(c for c in columns if c in ev.columns and c != "known")
+        cache = self._data.__dict__.setdefault("_event_arrays", {})
+        for c in columns:
+            if c not in cache:
+                arr = ev[c].to_numpy(dtype="datetime64[ns]" if c == "known" else None)
+                arr = arr.copy()
+                arr.setflags(write=False)
+                cache[c] = arr
+        known = cache["known"]
+        now = self.now
+        lo = np.searchsorted(known, np.datetime64(now - pd.Timedelta(days=days - 1), "ns"), side="left")
+        hi = np.searchsorted(known, np.datetime64(now, "ns"), side="right")
+        return {c: cache[c][lo:hi] for c in columns}
+
+    def previous_session(self) -> pd.Timestamp | None:
+        return self._data.calendar[self._t - 1] if self._t > 0 else None
+
     def total_return(self, symbol: str) -> pd.Series:
         return total_return_index(self._frame(symbol))
 

@@ -115,6 +115,10 @@ class DataStore:
         manifest = json.loads((d / "manifest.json").read_text(encoding="utf-8"))
         if manifest["dataset_version"] != version and not manifest["dataset_version"].startswith(version):
             raise KeyError(version)
+        if manifest.get("kind") == "index":
+            from quantlab.data import index_dataset
+
+            return index_dataset.load(self, manifest, d), manifest
         frames = {}
         for s, meta in manifest["symbols"].items():
             if file_sha256(meta_path := Path(self._raw_path_for(s, meta))) != meta["raw_sha256"]:

@@ -20,7 +20,7 @@ from typing import Any
 import pandas as pd
 import yaml
 
-from quantlab.analysis.trades import episodes, trade_stats, without_best_year
+from quantlab.analysis.trades import episodes, not_trades, trade_stats, without_best_year
 from quantlab.backtesting.engine import BacktestResult, run_backtest
 from quantlab.core.hashing import stable_hash
 from quantlab.core.market_data import MarketData
@@ -48,7 +48,8 @@ class BacktestSummary:
 
 def run_dev(factory, policy: dict, dev: MarketData, params: dict, qc_fatal: list[str]):
     """One exploratory run on TRAIN+VALIDATION data: metrics, strategy result, benchmark result."""
-    res = run_backtest(factory(**params), dev, _cfg(policy))
+    strategy = factory(**params)
+    res = run_backtest(strategy, dev, _cfg(policy))
     bench = run_backtest(BuyAndHold(policy["benchmark_symbol"]), dev, _cfg(policy))
     rf = _rf(dev, policy)
     m = {"strategy": M.summarize(res.equity, res.trades, rf), "benchmark": M.summarize(bench.equity, bench.trades, rf),
@@ -57,7 +58,7 @@ def run_dev(factory, policy: dict, dev: MarketData, params: dict, qc_fatal: list
     m["sharpe_diff"] = m["strategy"]["sharpe"] - m["benchmark"]["sharpe"]
     ex = res.returns() - rf.reindex(res.equity.index).fillna(0.0)
     m["sr_period"] = M.sharpe(ex, annualize=False)
-    m["trades"] = trade_stats(episodes(res, dev))
+    m["trades"] = trade_stats(episodes(res, dev, exclude=not_trades(strategy)))
     m["without_best_year"] = without_best_year(res.equity)
     return m, res, bench
 
@@ -252,6 +253,57 @@ class Lab:
             say("품질 검사 치명 항목이 있습니다. 결과는 INVALID로 처리됩니다.")
         return version
 
+    # --- index datasets (S&P 500 stocks, membership, SEC insider filings) ---------------
+    def _settings_path(self) -> Path:
+        return self.ws.path("settings.json")
+
+    def _settings(self) -> dict:
+        p = self._settings_path()
+        return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+
+    def sec_email(self) -> str | None:
+        return self._settings().get("sec_email") or None
+
+    def set_sec_email(self, email: str) -> None:
+        """The SEC asks automated downloads to carry a contact e-mail; it is sent only to sec.gov."""
+        from quantlab.data.sec_insider import user_agent
+
+        user_agent(email.strip())  # raises on a malformed address
+        st = self._settings()
+        st["sec_email"] = email.strip()
+        self._settings_path().write_text(json.dumps(st, indent=1), encoding="utf-8")
+
+    def needs_sec_email(self, spec_path: str | Path) -> bool:
+        spec = yaml.safe_load(Path(spec_path).read_text(encoding="utf-8"))
+        return "index" in (spec.get("universe") or {}) and self.sec_email() is None
+
+    def ensure_index_dataset(self, base_version: str, start: str, say=None, refresh: bool = False) -> str:
+        """S&P 500 dataset on top of the SPY/BIL dataset `base_version`: downloads the price bundle
+        (once, or again with `refresh`) and the SEC quarters not yet stored, then builds or reuses."""
+        from quantlab.data import index_dataset, sec_insider, sp500
+
+        say = say or (lambda s: None)
+        found = sp500.bundles(self.ws.root)
+        if refresh or not found:
+            found = [sp500.download_bundle(self.ws.root, say=say)]
+        email = self.sec_email()
+        if not email:
+            raise RuntimeError("SEC 내부자 거래 자료를 받으려면 연락용 이메일이 필요합니다 (SEC 규칙). "
+                               "백테스트 버튼을 다시 누르면 입력 창이 나옵니다.")
+        sec_insider.download(self.ws.root, email, say=say)
+        version, manifest = index_dataset.build(self.data, base_version, found[-1], sec_insider.records(self.ws.root),
+                                                start, say)
+        if manifest["qc_fatal"]:
+            say("품질 검사 치명 항목이 있습니다. 결과는 INVALID로 처리됩니다.")
+        return version
+
+    def ensure_spec_dataset(self, loaded: LoadedSpec, policy: dict, say=None) -> str:
+        symbols, start = loaded.spec["universe"]["symbols"], policy["splits"]["train"][0]
+        base = self.ensure_dataset(symbols, start, say)
+        if "index" in loaded.spec["universe"]:
+            return self.ensure_index_dataset(base, start, say)
+        return base
+
     def quick_backtest(self, spec_path: str | Path, say=None) -> BacktestSummary:
         """Import (or reuse) a spec, prepare its data, run an exploratory backtest with defaults."""
         say = say or (lambda s: None)
@@ -260,7 +312,7 @@ class Lab:
         if imp.state == "IDEA" and imp.problems:
             raise RuntimeError("전략 검사를 통과하지 못했습니다: " + "; ".join(imp.problems))
         _, policy = self.policy_for(imp.loaded)
-        version = self.ensure_dataset(imp.loaded.spec["universe"]["symbols"], policy["splits"]["train"][0], say)
+        version = self.ensure_spec_dataset(imp.loaded, policy, say)
         say("백테스트 실행 중")
         return self.backtest(imp.strategy_hash, version)
 
@@ -275,7 +327,7 @@ class Lab:
             raise RuntimeError("이 전략은 보류 구간으로 판정할 수 없습니다 (" + "; ".join(problems) + "). "
                                "오늘 이후 새로 쌓이는 데이터(전진 보류 구간)로만 판정합니다.")
         _, policy = self.policy_for(imp.loaded)
-        version = self.ensure_dataset(imp.loaded.spec["universe"]["symbols"], policy["splits"]["train"][0], say)
+        version = self.ensure_spec_dataset(imp.loaded, policy, say)
         if self.registry.confirmation(imp.strategy_hash) is None:
             self.confirm_candidate(imp.strategy_hash, note="desktop one-click")
         say("최종 평가 실행 중 (보류 구간 1회 열람)")

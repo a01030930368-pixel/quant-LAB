@@ -75,3 +75,31 @@ def regime_market(seed: int, start="2000-01-03", end="2023-12-29", bull=(0.015, 
 def universe_market(symbols, seed: int = 0, n: int = 1500, start="2010-01-01") -> MarketData:
     """Random market for an arbitrary symbol list (spec smoke tests)."""
     return random_market(seed, n=n, symbols=tuple(symbols), start=start, div_prob=0.005, split_prob=0.001)
+
+
+def index_market(symbols, seed: int = 0, n: int = 1500, n_stocks: int = 30, start="2010-01-01") -> MarketData:
+    """Random stock index with membership and insider-purchase events (smoke tests of index specs).
+
+    Stocks are named S00, S01, ...; each is a member for one random span. Events are random filings
+    by a few insiders per stock, officers or directors, some below any sensible value threshold."""
+    rng = np.random.default_rng(seed)
+    stocks = tuple(f"S{i:02d}" for i in range(n_stocks))
+    data = random_market(seed, n=n, symbols=stocks + tuple(s for s in symbols if s not in stocks), start=start,
+                         div_prob=0.005, split_prob=0.001)
+    cal = data.calendar
+    members = pd.DataFrame(False, index=cal, columns=list(stocks))
+    for s in stocks:
+        a = int(rng.integers(0, n // 2))
+        b = int(rng.integers(a + n // 4, n + 1))
+        members.iloc[a:b, members.columns.get_loc(s)] = True
+    rows = []
+    for _ in range(n_stocks * 12):
+        s = stocks[int(rng.integers(n_stocks))]
+        day = cal[int(rng.integers(n))] + pd.Timedelta(days=int(rng.integers(0, 3)))
+        for _ in range(int(rng.integers(1, 4))):
+            rows.append({"known": day + pd.Timedelta(days=int(rng.integers(0, 10))), "symbol": s,
+                         "owner": f"{s}-{int(rng.integers(5))}", "value": float(rng.choice([5e3, 5e4, 5e5])),
+                         "officer": bool(rng.random() < 0.6), "director": bool(rng.random() < 0.6),
+                         "kind": "insider_buy"})
+    events = pd.DataFrame(rows).sort_values(["known", "symbol", "owner"], kind="stable").reset_index(drop=True)
+    return data.with_tables(members, events)
