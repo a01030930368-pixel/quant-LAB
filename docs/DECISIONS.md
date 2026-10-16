@@ -271,3 +271,19 @@ was the one survivor (N4) of the earlier project.
   99 trades, t 2.4). It is `PREREGISTERED["AUTO-LEVP"]` and must not change.
 - It is not a candidate. The final evaluation runs as usual (DSR over the family's 684,000 trials),
   and is read as a check of the theme, not as an adoption. After it, neither group can read the holdout.
+
+## D-025 · 2026-10-16 · Oversold rebound: replication on new 3x ETFs, verdict on forward data
+
+The D-024 rule's final evaluation (EXP-20261016-aa7f8c248d) failed Gate 3: holdout CAGR 19.1% vs
+SPY 13.4%, but Sharpe 0.61 vs 0.65 and max drawdown -55.7% vs -30.2%. Its per-trade edge repeated out
+of sample (+2.26% net per trade vs +2.42% on TRAIN+VALIDATION, win rate 67%, 135 trades). The user
+chose to check the theme on new ETFs and then paper-trade it.
+- OSR-SECT3X 1.0.0: the same rule, unchanged, on Direxion 3x bull sector/size ETFs listed before 2012
+  that are not index trackers (SOXL, TNA, FAS, ERX, TECL, DRN, CURE), idle equity in SPY. The only
+  change is the size: 10% per leg (slots 10) instead of 25%, so at most 70% sits in 3x funds.
+- The size was chosen after seeing AUTO-LEVP's 2020+ result, and that result was exported, so the
+  2020+ holdout of these ETFs cannot count as independent evidence (03 §4.4). Their TRAIN+VALIDATION
+  backtest (2010-2019, never run on these ETFs) is the fast replication check; the verdict comes from
+  the forward holdout, data from 2026-10-17 on.
+- The home page's final evaluation now refuses before reading the holdout when the lineage check
+  would make it invalid, instead of spending the holdout on an INVALID result.

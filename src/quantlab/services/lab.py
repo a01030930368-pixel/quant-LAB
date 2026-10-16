@@ -222,7 +222,7 @@ class Lab:
         for p in sorted(self.ws.path("examples").glob("*.qls.yaml")) + sorted(self.ws.path("strategies").glob("*/*.qls.yaml")):
             try:
                 spec = yaml.safe_load(p.read_text(encoding="utf-8"))
-                if "combo" in (spec.get("rules") or {}):
+                if str(spec["strategy"]["id"]).startswith("AUTO-"):
                     continue  # automatic search groups have their own page
                 found.setdefault(f"{spec['strategy']['id']}@{spec['strategy']['version']}", p)
             except Exception:  # an unreadable file is shown nowhere rather than crashing the list
@@ -268,6 +268,12 @@ class Lab:
         """Confirm the default parameters (unless already confirmed) and run the one final evaluation."""
         say = say or (lambda s: None)
         imp = self.import_strategy(spec_path)
+        from quantlab.validation.engine import lineage_independence
+
+        problems = lineage_independence(self.registry, imp.strategy_id, imp.version)
+        if problems:  # the holdout could not count as evidence: do not spend it
+            raise RuntimeError("이 전략은 보류 구간으로 판정할 수 없습니다 (" + "; ".join(problems) + "). "
+                               "오늘 이후 새로 쌓이는 데이터(전진 보류 구간)로만 판정합니다.")
         _, policy = self.policy_for(imp.loaded)
         version = self.ensure_dataset(imp.loaded.spec["universe"]["symbols"], policy["splits"]["train"][0], say)
         if self.registry.confirmation(imp.strategy_hash) is None:
