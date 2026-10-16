@@ -10,11 +10,19 @@ backtester can do cash and share accounting directly:
 
 All symbols share one trading calendar index (the exchange schedule, which is
 public in advance and therefore not look-ahead information).
+
+Two optional point-in-time tables serve stock-universe strategies:
+
+    members : bool frame (calendar x symbols), True on the sessions a symbol was an index member
+    events  : one row per dated fact (e.g. an insider purchase filing), sorted by `known`, the
+              calendar date it became public; columns `known`, `symbol` and kind-specific fields
+
+Strategies read both only through `MarketView`, which never shows a row dated after the bar.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
@@ -26,6 +34,8 @@ FIELDS = ("open", "high", "low", "close", "dividend", "split")
 class MarketData:
     calendar: pd.DatetimeIndex
     frames: dict[str, pd.DataFrame]
+    members: pd.DataFrame | None = field(default=None, compare=False)
+    events: pd.DataFrame | None = field(default=None, compare=False)
 
     def __post_init__(self) -> None:
         if not self.calendar.is_monotonic_increasing or self.calendar.has_duplicates:
@@ -36,6 +46,13 @@ class MarketData:
                 raise ValueError(f"{sym}: missing fields {missing}")
             if not df.index.equals(self.calendar):
                 raise ValueError(f"{sym}: index must equal the shared calendar")
+        if self.members is not None and not self.members.index.equals(self.calendar):
+            raise ValueError("members: index must equal the shared calendar")
+        if self.events is not None:
+            if not {"known", "symbol"} <= set(self.events.columns):
+                raise ValueError("events need columns 'known' and 'symbol'")
+            if not self.events["known"].is_monotonic_increasing:
+                raise ValueError("events must be sorted by 'known'")
 
     @classmethod
     def from_frames(cls, frames: dict[str, pd.DataFrame]) -> "MarketData":
@@ -76,7 +93,14 @@ class MarketData:
         if end is not None:
             mask &= cal <= pd.Timestamp(end)
         new_cal = cal[mask]
-        return MarketData(new_cal, {s: df.loc[new_cal] for s, df in self.frames.items()})
+        members = self.members.loc[new_cal] if self.members is not None else None
+        events = self.events
+        if events is not None and end is not None:
+            events = events[events["known"] <= pd.Timestamp(end)].reset_index(drop=True)
+        return MarketData(new_cal, {s: df.loc[new_cal] for s, df in self.frames.items()}, members, events)
+
+    def with_tables(self, members: pd.DataFrame | None, events: pd.DataFrame | None) -> "MarketData":
+        return MarketData(self.calendar, self.frames, members, events)
 
 
 def total_return_index(df: pd.DataFrame) -> pd.Series:

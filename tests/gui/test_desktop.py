@@ -245,3 +245,23 @@ def test_auto_page_final_only_for_the_preregistered_near_miss(win, monkeypatch):
     page.cands.selectRow(0)
     page.final_candidate()
     assert len(asked) == 1 and "미리 고정" in asked[0] and "2020년 이후" in asked[0]
+
+
+def test_home_asks_for_the_sec_email_before_an_index_strategy(win, monkeypatch):
+    path = next(p for p in win.lab.strategy_files() if p.name == "INS-CLUSTER.qls.yaml")
+    started = []
+    monkeypatch.setattr(win.runner, "start", lambda *a, **k: started.append(a[0]) or True)
+    win.home.ask_email = lambda: None          # cancelled: nothing starts
+    win.home.run(path)
+    assert started == [] and win.lab.sec_email() is None
+    notes = []
+    monkeypatch.setattr(win, "notify", notes.append)
+    win.home.ask_email = lambda: "not-an-email"
+    win.home.run(path)
+    assert started == [] and notes
+    win.home.ask_email = lambda: "me@example.com"
+    win.home.run(path)
+    assert started == ["백테스트"] and win.lab.sec_email() == "me@example.com"
+    win.home.ask_email = lambda: pytest.fail("asked again")
+    win.home.run(path)
+    assert started == ["백테스트", "백테스트"]

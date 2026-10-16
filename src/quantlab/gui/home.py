@@ -14,7 +14,7 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QColor, QDesktopServices, QPalette
 from PySide6.QtWidgets import (QAbstractItemView, QButtonGroup, QComboBox, QFileDialog, QFrame, QHBoxLayout,
-                               QHeaderView, QLabel, QLineEdit, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton,
+                               QHeaderView, QInputDialog, QLabel, QLineEdit, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton,
                                QScrollArea, QSizePolicy, QStyledItemDelegate, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
 from quantlab.analysis import charts
@@ -427,7 +427,32 @@ class HomePage(Page):
     def _idle(self):
         self.progress.hide()
 
+    SEC_EMAIL_TEXT = ("이 전략은 S&P 500 종목 가격과 SEC(미국 증권거래위원회)의 내부자 거래 공시를 씁니다.\n"
+                      "SEC는 자료를 자동으로 받는 프로그램에 연락용 이메일을 밝히라고 요구해요.\n"
+                      "입력한 이메일은 이 PC에만 저장되고 SEC 서버에만 전달돼요.\n\n연락용 이메일:")
+
+    def ask_email(self) -> str | None:
+        text, ok = QInputDialog.getText(self, "SEC 연락용 이메일", self.SEC_EMAIL_TEXT)
+        return text.strip() if ok and text.strip() else None
+
+    def _ensure_sec_email(self, path: Path) -> bool:
+        """Index strategies need the SEC contact e-mail before their data can be downloaded."""
+        if not self.lab.needs_sec_email(path):
+            return True
+        email = self.ask_email()
+        if not email:
+            return False
+        try:
+            self.lab.set_sec_email(email)
+        except ValueError as e:
+            self.win.notify(str(e))
+            return False
+        return True
+
     def run(self, path: Path):
+        if not self._ensure_sec_email(path):
+            return
+
         def done(bt):
             self._idle()
             self.win.refresh_all()
@@ -441,6 +466,8 @@ class HomePage(Page):
             self._idle()
 
     def final(self, path: Path, sid: str):
+        if not self._ensure_sec_email(path):
+            return
         reads = self.lab.holdout_reads(sid)
         text = (f"{sid}의 최종 평가를 시작할까요?\n\n"
                 "• 지금의 기본 설정이 후보로 확정됩니다.\n"

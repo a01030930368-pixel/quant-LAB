@@ -109,7 +109,7 @@ def run_backtest(strategy: Strategy, data: MarketData, config: BacktestConfig | 
     for t in range(n):
         date = cal[t]
         # 1. corporate actions at the open
-        for i in range(len(syms)):
+        for i in np.flatnonzero((splits[t] != 1.0) | (divs[t] != 0.0)):  # only symbols with an action today
             if splits[t, i] != 1.0:
                 shares[i] *= splits[t, i]
                 if i in pending:  # brokers restate open orders for splits

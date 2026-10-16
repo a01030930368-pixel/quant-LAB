@@ -208,6 +208,17 @@ class DataScreen(Screen):
         cl.addWidget(self.button("파일 선택…", self.pick_csv))
         lay.addWidget(csv)
 
+        idx = QGroupBox("S&P 500 종목 · SEC 내부자 거래 (지수 전략용)")
+        il = QHBoxLayout(idx)
+        self.sec_email = QLineEdit()
+        self.sec_email.setPlaceholderText("SEC 연락용 이메일 (SEC 규칙; 이 PC와 sec.gov에만 전달)")
+        il.addWidget(self.sec_email, 2)
+        il.addWidget(self.button("저장", self.save_sec_email))
+        il.addWidget(self.button("S&P 500 가격 새로 받기", self.refresh_sp500))
+        self.index_info = QLabel("")
+        il.addWidget(self.index_info, 2)
+        lay.addWidget(idx)
+
         lay.addWidget(QLabel("받은 자료 (최신 기록, 품질 검사 결과)"))
         self.raw = _table()
         lay.addWidget(self.raw, 2)
@@ -228,6 +239,21 @@ class DataScreen(Screen):
         self.lab.set_api_key(k)
         self.key.clear()
         self.win.status("API 키를 저장했습니다.")
+
+    def save_sec_email(self):
+        try:
+            self.lab.set_sec_email(self.sec_email.text())
+        except ValueError as e:
+            self.win.notify(str(e))
+            return
+        self.win.status("SEC 연락용 이메일을 저장했습니다.")
+        self.refresh()
+
+    def refresh_sp500(self):
+        from quantlab.data import sp500
+
+        self.win.runner.start("S&P 500 가격 받기", lambda p: sp500.download_bundle(self.lab.ws.root, say=p.say),
+                              lambda _: self.win.refresh_all())
 
     def fetch(self):
         syms = self.symbols.text().upper().split()
@@ -252,6 +278,14 @@ class DataScreen(Screen):
                                   lambda _: self.win.refresh_all())
 
     def refresh(self):
+        from quantlab.data import sec_insider, sp500
+
+        if self.lab.sec_email() and not self.sec_email.text():
+            self.sec_email.setText(self.lab.sec_email())
+        b = sp500.bundles(self.lab.ws.root)
+        q = sorted(sec_insider.records(self.lab.ws.root))
+        self.index_info.setText(f"S&P 500 가격: {b[-1]['fetched_at'][:8] if b else '없음'} · "
+                                f"SEC 분기: {f'{q[0]}~{q[-1]} ({len(q)}개)' if q else '없음'}")
         latest: dict[str, dict] = {}
         for m in self.lab.data.raw_records():
             latest[m["symbol"]] = m

@@ -60,6 +60,7 @@ def test_builtin_specs_import_and_resolve_their_policies(tmp_path):
             assert res.state == "RESEARCH", (spec.name, res.problems)
             _, policy = lab.policy_for(res.loaded)
             assert policy["strategy_family"] == res.strategy_id
-            assert set(res.loaded.spec["universe"]["symbols"]) == set(policy["universe"])
+            un = res.loaded.spec["universe"]
+        assert set(un["symbols"]) | ({un["index"]} if "index" in un else set()) == set(policy["universe"])
     finally:
         lab.close()

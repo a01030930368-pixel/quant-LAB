@@ -287,3 +287,29 @@ chose to check the theme on new ETFs and then paper-trade it.
   the forward holdout, data from 2026-10-17 on.
 - The home page's final evaluation now refuses before reading the holdout when the lineage check
   would make it invalid, instead of spending the holdout on an INVALID result.
+
+## D-026 · 2026-10-16 · Insider purchase clusters in S&P 500 stocks (study A)
+
+The oversold-rebound line is closed. The user chose event-driven ideas: A insider buying, then B
+post-earnings drift, then C calendar effects. A needs every stock that was in the S&P 500, delisted
+names included, and the SEC's insider filings.
+- Prices and membership: the public GitHub project Johnbrick123/sp500-data (release `data`), free and
+  without a key. Checked 2026-10-16 by counting only (no returns read): every one of 717 stocks that
+  were members in 2010-2019 has prices on 99.99% of its member sessions. It has no licence and part of
+  it is labelled as CRSP-derived, so it is used for the user's own research only, stays in the work
+  folder and never goes into the repository or result packets. The app scales prices by
+  adj_close / close (total-return prices, dividends 0, splits 1); rows without an open (the
+  CRSP-derived ones) trade at that day's close.
+- Insider filings: SEC Insider Transactions Data Sets (quarterly zips, 2009q3 on), downloaded by the
+  app with the user's contact e-mail in the User-Agent as the SEC requires. Original Form 4 only;
+  open-market purchases (code P, acquired). An issuer is linked to a price ticker through the symbols
+  it filed under, so FB-era filings reach META and a recycled symbol does not reach the old company.
+- INS-CLUSTER 1.0.0, fixed before any insider data was read: two or more different officers or
+  directors, each buying at least $10,000 in one filing, filings public within 30 calendar days; the
+  signal is the session the second insider's filing appears, for a stock that is an S&P 500 member that
+  day and is not held. Buy at the next open with 1/10 of equity, sell 20 sessions later; idle equity in
+  SPY; more signals than free slots: larger total purchase value first. One rule, no search.
+- Policy `ins_cluster_v1`: TRAIN 2010-2015, VALIDATION 2016-2019, holdout 2020 on, the standing costs
+  (0.25% + 0.05% one way) and gates. The stock prices were seen by the user's earlier project; insider
+  filings were never used there.
+- SPY holdings of a strategy that declares a `park_symbol` are not counted as trades of the rule.
