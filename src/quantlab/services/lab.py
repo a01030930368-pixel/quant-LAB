@@ -278,15 +278,18 @@ class Lab:
         spec = yaml.safe_load(Path(spec_path).read_text(encoding="utf-8"))
         return "index" in (spec.get("universe") or {}) and self.sec_email() is None
 
-    def ensure_index_dataset(self, base_version: str, start: str, say=None, refresh: bool = False) -> str:
+    def ensure_index_dataset(self, base_version: str, start: str, say=None, refresh: bool = False,
+                             today: str | None = None) -> str:
         """S&P 500 dataset on top of the SPY/BIL dataset `base_version`: downloads the price bundle
-        (once, or again with `refresh`) and the SEC quarters not yet stored, then builds or reuses."""
+        (once, or again with `refresh`) and the SEC quarters not yet stored, then builds or reuses.
+        `today` (YYYYMMDD, UTC; paper trading) also fetches the bundle again unless it was fetched that
+        day, and the current members' earnings filings likewise."""
         from quantlab.data import index_dataset, sec_earnings, sec_insider, sp500
 
         say = say or (lambda s: None)
         found = sp500.bundles(self.ws.root)
-        if refresh or not found:
-            found = [sp500.download_bundle(self.ws.root, say=say)]
+        if refresh or not found or (today and found[-1]["fetched_at"][:8] < today):
+            found = found + [sp500.download_bundle(self.ws.root, say=say)]
         email = self.sec_email()
         if not email:
             raise RuntimeError("SEC 내부자 거래 자료를 받으려면 연락용 이메일이 필요합니다 (SEC 규칙). "
@@ -294,8 +297,13 @@ class Lab:
         sec_insider.download(self.ws.root, email, say=say)
         sec_records = sec_insider.records(self.ws.root)
         say("회사 목록 정리 중")
-        ciks = sorted(set(index_dataset.issuer_links(found[-1], sec_records)["issuer_cik"]))
+        links = index_dataset.issuer_links(found[-1], sec_records)
+        ciks = sorted(set(links["issuer_cik"]))
         sec_earnings.download(self.ws.root, email, ciks, say=say)
+        if today:
+            now = set(sp500.current_members(found[-1]))
+            sec_earnings.download(self.ws.root, email, sorted(set(links.loc[links["ticker"].isin(now), "issuer_cik"])),
+                                  say=say, refresh_before=today)
         earnings = {c: m for c, m in sec_earnings.records(self.ws.root).items() if c in set(ciks)}
         version, manifest = index_dataset.build(self.data, base_version, found[-1], sec_records, start, say,
                                                 earnings_records=earnings)
@@ -303,11 +311,11 @@ class Lab:
             say("품질 검사 치명 항목이 있습니다. 결과는 INVALID로 처리됩니다.")
         return version
 
-    def ensure_spec_dataset(self, loaded: LoadedSpec, policy: dict, say=None) -> str:
+    def ensure_spec_dataset(self, loaded: LoadedSpec, policy: dict, say=None, today: str | None = None) -> str:
         symbols, start = loaded.spec["universe"]["symbols"], policy["splits"]["train"][0]
         base = self.ensure_dataset(symbols, start, say)
         if "index" in loaded.spec["universe"]:
-            return self.ensure_index_dataset(base, start, say)
+            return self.ensure_index_dataset(base, start, say, today=today)
         return base
 
     def quick_backtest(self, spec_path: str | Path, say=None) -> BacktestSummary:
@@ -338,6 +346,11 @@ class Lab:
             self.confirm_candidate(imp.strategy_hash, note="desktop one-click")
         say("최종 평가 실행 중 (보류 구간 1회 열람)")
         return self.final_evaluation(imp.strategy_hash, version)
+
+    def paper(self):
+        from quantlab.services.paper import Paper
+
+        return Paper(self)
 
     def holdout_reads(self, strategy_id: str) -> int:
         return sum(1 for r in self.registry.holdout_ledger() if r["strategy_family"] == strategy_id)

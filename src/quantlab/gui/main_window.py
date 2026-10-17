@@ -735,6 +735,7 @@ class MainWindow(QMainWindow):
     def __init__(self, lab: Lab, sync: bool = False) -> None:
         from quantlab.gui.autopage import AutoPage
         from quantlab.gui.home import HomePage, ResultPage
+        from quantlab.gui.paperpage import PaperPage
 
         super().__init__()
         self.lab = lab
@@ -754,6 +755,7 @@ class MainWindow(QMainWindow):
         self.home = HomePage(self)
         self.result = ResultPage(self)
         self.auto = AutoPage(self)
+        self.paper = PaperPage(self)
         advanced = QWidget()
         advanced.setObjectName("page")
         al = QVBoxLayout(advanced)
@@ -764,7 +766,7 @@ class MainWindow(QMainWindow):
         al.addWidget(self.tabs)
 
         self.stack = QStackedWidget()
-        self.pages = {"홈": self.home, "자동 탐색": self.auto, "결과": self.result, "고급": advanced}
+        self.pages = {"홈": self.home, "자동 탐색": self.auto, "모의 투자": self.paper, "결과": self.result, "고급": advanced}
         top = QWidget()
         top.setObjectName("topbar")
         tl = QHBoxLayout(top)
@@ -818,6 +820,8 @@ class MainWindow(QMainWindow):
         self.nav[name].setChecked(True)
         if name == "자동 탐색":
             self.auto.refresh()
+        elif name == "모의 투자":
+            self.paper.refresh()
 
     def show_result(self, experiment_id: str) -> None:
         self.result.select(experiment_id)
@@ -843,6 +847,7 @@ class MainWindow(QMainWindow):
             for b in s.actions:
                 b.setEnabled(not busy)
         self.auto._buttons()
+        self.paper._buttons()
         if not busy:
             self.home._idle()
             self.home.refresh()  # restores each card's own enabled state

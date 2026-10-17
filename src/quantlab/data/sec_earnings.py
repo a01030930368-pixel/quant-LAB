@@ -53,10 +53,20 @@ def _get(http, url: str, headers: dict, timeout: float):
     return resp.content
 
 
+def _stored_pages(meta: dict) -> dict[str, bytes]:
+    """Older pages of a stored company file, by the name its main file gives them."""
+    with gzip.open(meta["path"], "rb") as g:
+        pages = json.loads(g.read())
+    names = [f["name"] for f in pages[0].get("filings", {}).get("files", [])]
+    return {n: json.dumps(p).encode() for n, p in zip(names, pages[1:])}
+
+
 def download(root: str | Path, email: str, ciks: list[str], session=None, say=None, timeout: float = 60.0,
-             refresh: bool = False) -> dict:
+             refresh: bool = False, refresh_before: str | None = None) -> dict:
     """Store each company's submissions JSON (main file and older pages) gzip-compressed, as received.
-    Companies already stored are skipped unless `refresh`. Returns {"fetched", "missing"}."""
+    Companies already stored are skipped unless `refresh`, or unless fetched before `refresh_before`
+    (YYYYMMDD, UTC); such a refresh fetches the main file again and keeps the older pages already
+    stored, which the SEC never changes. Returns {"fetched", "missing"}."""
     import requests
 
     say = say or (lambda s: None)
@@ -65,7 +75,8 @@ def download(root: str | Path, email: str, ciks: list[str], session=None, say=No
     d = store_dir(root)
     d.mkdir(parents=True, exist_ok=True)
     have = records(root)
-    todo = [c for c in sorted(set(ciks)) if refresh or c not in have]
+    stale = {c for c, m in have.items() if refresh_before and m["fetched_at"][:8] < refresh_before}
+    todo = [c for c in sorted(set(ciks)) if refresh or c not in have or c in stale]
     fetched, missing = [], []
     for i, cik in enumerate(todo):
         if i % 20 == 0:
@@ -74,9 +85,10 @@ def download(root: str | Path, email: str, ciks: list[str], session=None, say=No
         if main is None:
             missing.append(cik)
             continue
+        old = _stored_pages(have[cik]) if cik in stale and not refresh else {}
         pages = [main]
         for f in json.loads(main).get("filings", {}).get("files", []):
-            page = _get(http, API + f["name"], headers, timeout)
+            page = old.get(f["name"]) or _get(http, API + f["name"], headers, timeout)
             if page is None:
                 raise RuntimeError(f"SEC submissions page missing: {f['name']}")
             pages.append(page)
