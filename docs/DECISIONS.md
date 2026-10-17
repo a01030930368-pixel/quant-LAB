@@ -402,3 +402,18 @@ gross per trade, but SPY gained +0.88% over the same 20 sessions (excess +0.23%,
   late are recorded with the time they were seen.
 - Fixed on the way: re-importing a spec from its stored copy in the work folder (a spec added with
   명세서 추가, then run from the strategy list) copied the file onto itself and failed.
+
+## D-032 · 2026-10-17 · Turn-of-the-month rule on sector 3x ETFs (CAL-TOM-SECT3X)
+- GAP-EARN-SP500 failed its final evaluation the same day (EXP-20261017-d6ae28622a); the user asked to
+  go on with idea C of the 2026-10-16 plan (calendar effects).
+- One rule, fixed before any run: hold SOXL, TNA, FAS, ERX, TECL, DRN, CURE at 7.14% each (50% in all)
+  from the open of the last session of each month to the open of the 4th session of the next; the
+  other half sits in BIL from the first session and is never traded. Sessions come from the NYSE
+  schedule. New rules block `calendar` (`quantlab.strategies.calendar_tom`).
+- Why these choices: the effect is about +0.1% a day on the market, below the 0.6% round trip on 1x
+  funds; 3x funds lift it above the 1.2%-per-trade bar if it still exists. Half the equity keeps one
+  bad window (2011-08-style) near -10% instead of -20% or worse. Pre-holiday and FOMC days were left
+  out (one session each, too short for the cost).
+- Policy cal_tom_v1 = osr_sect3x_v1's splits, costs and gates; holdout 2020+ (never read for these
+  funds), forward holdout from 2026-10-18. Expected outcome stated before the run: likely fails on
+  return against SPY, since the money is out of the market about 80% of the time.

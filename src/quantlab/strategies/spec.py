@@ -249,6 +249,10 @@ def load_spec(path: str | Path) -> LoadedSpec:
                 from quantlab.strategies.stock_combo import StockComboStrategy
 
                 return StockComboStrategy(spec_id=sid, spec_version_str=ver, rules=rules, **params)
+            if "calendar" in rules:
+                from quantlab.strategies.calendar_tom import CalendarStrategy
+
+                return CalendarStrategy(spec_id=sid, spec_version_str=ver, rules=rules, **params)
             if "earnings" in rules:
                 from quantlab.strategies.earnings import EarningsDriftStrategy
 
