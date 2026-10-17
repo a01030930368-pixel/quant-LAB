@@ -262,6 +262,11 @@ class Lab:
         p = self._settings_path()
         return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
 
+    def set_setting(self, key: str, value) -> None:
+        st = self._settings()
+        st[key] = value
+        self._settings_path().write_text(json.dumps(st, indent=1), encoding="utf-8")
+
     def sec_email(self) -> str | None:
         return self._settings().get("sec_email") or None
 
@@ -282,13 +287,17 @@ class Lab:
                              today: str | None = None) -> str:
         """S&P 500 dataset on top of the SPY/BIL dataset `base_version`: downloads the price bundle
         (once, or again with `refresh`) and the SEC quarters not yet stored, then builds or reuses.
-        `today` (YYYYMMDD, UTC; paper trading) also fetches the bundle again unless it was fetched that
-        day, and the current members' earnings filings likewise."""
+        `today` (YYYYMMDD, UTC; paper trading) also fetches the bundle again when it lacks the latest
+        SPY session (at most every few hours), and the current members' earnings filings unless
+        fetched that day."""
         from quantlab.data import index_dataset, sec_earnings, sec_insider, sp500
 
         say = say or (lambda s: None)
         found = sp500.bundles(self.ws.root)
-        if refresh or not found or (today and found[-1]["fetched_at"][:8] < today):
+        if today and found:
+            base = json.loads((self.data.proc_dir / base_version[:16] / "manifest.json").read_text(encoding="utf-8"))
+            last = max(m["last"] for m in base["symbols"].values())
+        if refresh or not found or (today and sp500.stale(found[-1], last)):
             found = found + [sp500.download_bundle(self.ws.root, say=say)]
         email = self.sec_email()
         if not email:

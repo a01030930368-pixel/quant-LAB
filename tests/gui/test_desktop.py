@@ -299,3 +299,23 @@ def test_paper_page_shows_the_next_orders_and_the_slots(win, monkeypatch):
     assert win.paper.table.rowCount() == 1 and win.paper.table.item(0, 0).text() == "FFFF"
     win.paper._show("days")
     assert win.paper.table.rowCount() == 0          # nothing saved in this work folder
+
+
+def test_paper_page_switches_the_automatic_refresh(win, monkeypatch):
+    """D-031: the checkbox registers the Windows task (only in the installed app)."""
+    from quantlab.services import scheduler
+
+    win.go("모의 투자")
+    assert not win.paper.auto.isEnabled()          # a source checkout cannot schedule QuantLab.exe
+    done = []
+    monkeypatch.setattr(scheduler, "supported", lambda: True)
+    monkeypatch.setattr(scheduler, "install", lambda exe=None: done.append("install"))
+    monkeypatch.setattr(scheduler, "remove", lambda: done.append("remove"))
+    monkeypatch.setattr(win.lab, "has_api_key", lambda: True)
+    win.lab.set_sec_email("someone@example.com")
+    win.paper.refresh()
+    assert win.paper.auto.isEnabled()
+    win.paper.auto.setChecked(True)
+    assert done == ["install"] and win.lab.paper().auto_ids() == ["GAP-EARN-SP500"]
+    win.paper.auto.setChecked(False)
+    assert done == ["install", "remove"] and win.lab.paper().auto_ids() == []

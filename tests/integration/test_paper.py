@@ -18,6 +18,13 @@ from synthetic import frame
 from test_insider import CIK, STOCKS, earnings_calendar, make_filings
 
 START = "2021-03-01"
+
+
+def lag(bundle_dir):
+    p = f"{bundle_dir}/meta.json"
+    meta = json.loads(open(p, encoding="utf-8").read())
+    meta["last_date"] = "2021-12-30"
+    open(p, "w", encoding="utf-8").write(json.dumps(meta))
 EARN_DOWNLOAD = sec_earnings.download  # the module fixture replaces it while it runs
 
 
@@ -66,15 +73,16 @@ def env(tmp_path_factory):
 
     calls = {"bundle": 0, "earn": []}
     fixture_bundle = sp500.bundles(lab.ws.root)[0]
+    lag(fixture_bundle["dir"])  # the stored bundle lacks the last SPY session: a refresh downloads it again
 
     def fake_bundle(root, session=None, say=None, timeout=0):  # "today's" download: the same files again
         calls["bundle"] += 1
-        ts = f"2026101{6 + calls['bundle']}T000000000000Z"
+        ts = f"20261016T0{calls['bundle']}0000000000Z"
         d = sp500.bundle_dir(root) / ts
         d.mkdir(parents=True)
         for n in sp500.FILES:
             shutil.copy(f"{fixture_bundle['dir']}/{n}", d / n)
-        meta = {**fixture_bundle, "fetched_at": ts, "dir": str(d)}
+        meta = {**fixture_bundle, "fetched_at": ts, "dir": str(d), "last_date": "2021-12-31"}
         (d / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
         return meta
 
@@ -128,6 +136,7 @@ def test_a_second_refresh_keeps_the_record_and_reports_a_changed_fill(env):
     led["fills"][0]["price"] *= 1.01           # as if the price had since been revised
     led_path.write_text(json.dumps(led))
     snap = paper.refresh(spec, today="20261018")
+    assert calls["bundle"] == 1        # the bundle has the last session now: not downloaded again
     assert [c["kind"] for c in snap["ledger"]["changed"]] == ["different"]
     after = json.loads(led_path.read_text())
     assert len(after["fills"]) == n and after["fills"][0]["price"] == led["fills"][0]["price"]  # first version kept
@@ -135,9 +144,12 @@ def test_a_second_refresh_keeps_the_record_and_reports_a_changed_fill(env):
 
 def test_old_bundles_from_refreshes_are_removed(env):
     lab, spec, calls = env
+    lag(sp500.bundles(lab.ws.root)[-1]["dir"])
+    lab.paper().refresh(spec, today="20261019")
+    assert calls["bundle"] == 2
     dirs = [b["dir"] for b in sp500.bundles(lab.ws.root)]
     # the fixture's own bundle stays; of the refreshes' bundles only the newest is kept
-    assert len(dirs) == 2 and dirs[0].endswith("20261016T000000000000Z")
+    assert len(dirs) == 2 and dirs[0].endswith("20261016T000000000000Z") and dirs[1].endswith("T020000000000Z")
     made = json.loads(lab.ws.path("paper", "created.json").read_text())
     assert made["bundles"] == [dirs[1]]
 
@@ -209,3 +221,48 @@ def test_earnings_refresh_fetches_only_the_main_file(tmp_path):
     df = sec_earnings.parse_company(meta["path"], "1001")
     assert len(df) == 1 + 5 and "n1" in set(df["accession"])   # new main file + the stored older pages
     assert meta["sha256"] == file_sha256(meta["path"])
+
+
+def test_automatic_refresh_logs_one_line_per_rule_and_skips_while_locked(env):
+    """D-031: what `QuantLab.exe --paper-refresh` runs."""
+    lab, spec, calls = env
+    paper = lab.paper()
+    assert paper.run_auto() is True and paper.last_auto() is None   # nothing switched on: nothing run
+    paper.set_auto("GAP-PAPER-T", True)
+    assert paper.auto_ids() == ["GAP-PAPER-T"]
+    assert paper.run_auto(today="20261020") is True, paper.last_auto()
+    assert "GAP-PAPER-T 기준일 2021-12-31" in paper.last_auto()
+    lock = lab.ws.path("paper", "refresh.lock")
+    lock.write_text("")
+    try:
+        with pytest.raises(RuntimeError, match="진행 중"):
+            paper.refresh(spec, today="20261020")
+        assert paper.run_auto(today="20261020") is False and "실패" in paper.last_auto()
+    finally:
+        lock.unlink()
+    old = lock.with_name("refresh.lock")
+    old.write_text("")
+    import os
+    import time
+
+    os.utime(old, (time.time() - 4 * 3600,) * 2)                  # left by a killed run
+    paper.refresh(spec, today="20261020")
+    assert not old.exists()
+    paper.set_auto("GAP-PAPER-T", False)
+
+
+def test_scheduled_task_runs_the_app_twice_a_day_and_catches_up():
+    import xml.etree.ElementTree as ET
+    from datetime import date
+
+    from quantlab.services import scheduler
+
+    xml = scheduler.task_xml(r"C:\Users\A & B\QuantLab\QuantLab.exe", start=date(2026, 10, 17))
+    root = ET.fromstring(xml.split("\n", 1)[1])
+    ns = {"t": "http://schemas.microsoft.com/windows/2004/02/mit/task"}
+    starts = [e.text for e in root.findall(".//t:CalendarTrigger/t:StartBoundary", ns)]
+    assert starts == ["2026-10-17T08:30:00", "2026-10-17T21:00:00"]
+    assert root.find(".//t:StartWhenAvailable", ns).text == "true"
+    assert root.find(".//t:Exec/t:Command", ns).text == r"C:\Users\A & B\QuantLab\QuantLab.exe"
+    assert root.find(".//t:Exec/t:Arguments", ns).text == "--paper-refresh"
+    assert root.find(".//t:LogonType", ns).text == "InteractiveToken"

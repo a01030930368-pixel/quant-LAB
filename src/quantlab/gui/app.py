@@ -2,6 +2,9 @@
 
     QuantLab.exe              open the app (asks for a work folder on first run)
     QuantLab.exe --selftest   run the synthetic end-to-end flow without a window; exit code 0 = pass
+    QuantLab.exe --paper-refresh
+                              refresh the paper-trading rules switched to automatic, without a window
+                              (run by Windows Task Scheduler; log in <work folder>/paper/auto.log)
 """
 
 from __future__ import annotations
@@ -33,6 +36,21 @@ def _selftest() -> int:
             return 1
         log("SELFTEST OK" if res.get("ok") else "SELFTEST FAILED")
         return 0 if res.get("ok") else 1
+
+
+def _paper_refresh() -> int:
+    from PySide6.QtCore import QSettings
+
+    from quantlab.services.lab import Lab
+
+    saved = QSettings("QuantLab", "QuantLab").value("workspace")
+    if not saved or not Path(saved).exists():
+        return 2  # the app has not been set up on this PC
+    lab = Lab(saved)
+    try:
+        return 0 if lab.paper().run_auto() else 1
+    finally:
+        lab.close()
 
 
 def choose_workspace(settings, parent=None) -> Path | None:
@@ -72,6 +90,8 @@ def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv if argv is None else argv)
     if "--selftest" in argv:
         return _selftest()
+    if "--paper-refresh" in argv:
+        return _paper_refresh()
     from PySide6.QtCore import QSettings
     from PySide6.QtWidgets import QApplication
 

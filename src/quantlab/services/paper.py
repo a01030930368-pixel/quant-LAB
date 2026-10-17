@@ -19,8 +19,11 @@ a fill already recorded, the record keeps the first version and the page lists t
 from __future__ import annotations
 
 import json
+import os
 import shutil
-from datetime import datetime, timezone
+import time
+from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import numpy as np
@@ -34,6 +37,7 @@ from quantlab.validation.engine import BuyAndHold, _cfg
 
 WARMUP_SESSIONS = 300     # rolling windows of the rules (200-day average, 52-week high) fit in this
 MIN_PRICED_SHARE = 0.90   # an index session counts once this share of its members has a close
+LOCK_STALE_SECONDS = 3 * 3600
 
 
 class FromDate(Strategy):
@@ -114,8 +118,68 @@ class Paper:
     def days(self, sid: str, version: str) -> list[dict]:
         return [json.loads(p.read_text(encoding="utf-8")) for p in sorted((self.folder(sid, version) / "days").glob("*.json"))]
 
+    # --- automatic refresh (Windows Task Scheduler runs `QuantLab.exe --paper-refresh`) ------
+    def auto_ids(self) -> list[str]:
+        return list(self.lab._settings().get("paper_auto", []))
+
+    def set_auto(self, sid: str, on: bool) -> list[str]:
+        ids = [i for i in self.auto_ids() if i != sid] + ([sid] if on else [])
+        self.lab.set_setting("paper_auto", ids)
+        return ids
+
+    def log_path(self) -> Path:
+        return self.lab.ws.path("paper", "auto.log")
+
+    def last_auto(self) -> str | None:
+        p = self.log_path()
+        if not p.exists():
+            return None
+        lines = p.read_text(encoding="utf-8").strip().splitlines()
+        return lines[-1] if lines else None
+
+    def run_auto(self, today: str | None = None) -> bool:
+        """Refresh every rule switched to automatic; one log line each. False if any failed."""
+        ok = True
+        ids = set(self.auto_ids())
+        for r in self.candidates():
+            if r["id"] not in ids:
+                continue
+            stamp = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=9))).strftime("%Y-%m-%d %H:%M")
+            try:
+                s = self.refresh(r["path"], today=today)
+                side = {"buy": "매수", "sell": "매도"}
+                acts = [f"{side[o['side']]} {o['symbol']}" for o in s.get("orders", []) if o["side"] in side]
+                line = f"{stamp} {r['id']} 기준일 {s['asof']} · " + (", ".join(acts) if acts else "주문 없음")
+            except Exception as e:  # noqa: BLE001 - one rule failing must not stop the others
+                ok = False
+                line = f"{stamp} {r['id']} 실패: {type(e).__name__}: {e}"
+            self.log_path().parent.mkdir(parents=True, exist_ok=True)
+            with open(self.log_path(), "a", encoding="utf-8") as f:
+                f.write(line.replace("\n", " ") + "\n")
+        return ok
+
+    @contextmanager
+    def _lock(self):
+        path = self.lab.ws.path("paper", "refresh.lock")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.exists() and time.time() - path.stat().st_mtime > LOCK_STALE_SECONDS:
+            path.unlink(missing_ok=True)  # left behind by a run that was killed
+        try:
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            raise RuntimeError("다른 모의 투자 갱신이 진행 중이에요 (자동 갱신일 수 있어요). 잠시 뒤 다시 눌러 주세요.") from None
+        os.close(fd)
+        try:
+            yield
+        finally:
+            path.unlink(missing_ok=True)
+
     # --- one refresh ---------------------------------------------------------------------
     def refresh(self, spec_path: str | Path, say=None, today: str | None = None) -> dict:
+        with self._lock():
+            return self._refresh(spec_path, say, today)
+
+    def _refresh(self, spec_path: str | Path, say=None, today: str | None = None) -> dict:
         say = say or (lambda s: None)
         lab = self.lab
         imp = lab.import_strategy(spec_path)

@@ -89,6 +89,29 @@ def read_bundle(meta: dict) -> tuple[pd.DataFrame, pd.DataFrame]:
     return prices, members
 
 
+def last_date(meta: dict) -> pd.Timestamp:
+    """Last price date in a bundle (kept in its meta.json after the first read)."""
+    if meta.get("last_date"):
+        return pd.Timestamp(meta["last_date"])
+    d = pd.read_parquet(Path(meta["dir"]) / "prices.parquet", columns=["date"])["date"]
+    last = pd.Timestamp(pd.to_datetime(d).max()).normalize()
+    p = Path(meta["dir"]) / "meta.json"
+    stored = json.loads(p.read_text(encoding="utf-8"))
+    stored["last_date"] = str(last.date())
+    p.write_text(json.dumps(stored, indent=1), encoding="utf-8")
+    return last
+
+
+def stale(meta: dict, session, now: datetime | None = None, wait_hours: float = 6.0) -> bool:
+    """The bundle lacks `session` (the latest SPY session) and was fetched over `wait_hours` ago:
+    worth downloading again (the source refreshes nightly)."""
+    if last_date(meta) >= pd.Timestamp(session):
+        return False
+    now = now or datetime.now(timezone.utc)
+    fetched = datetime.strptime(meta["fetched_at"][:15], "%Y%m%dT%H%M%S").replace(tzinfo=timezone.utc)
+    return (now - fetched).total_seconds() > wait_hours * 3600
+
+
 def current_members(meta: dict) -> list[str]:
     """Tickers in the bundle's latest membership snapshot."""
     m = pd.read_parquet(Path(meta["dir"]) / "members.parquet", columns=["date", "ticker"])
