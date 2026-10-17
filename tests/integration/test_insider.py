@@ -361,3 +361,20 @@ def test_auto_search_on_index_stocks_runs_on_dev_data_only(lab, built):
     assert out["family_trials"] >= 3 + 2  # INS-CLUSTER and PEAD-SP500 count as prior trials
     m = next(v["metrics"] for v in auto.trials("AUTO-SP500").values() if v["metrics"] and v["metrics"]["n"])
     assert "excess" in m
+
+
+GAP = builtin_path("specs", "GAP-EARN-SP500.qls.yaml")
+
+
+def test_gap_earn_rule_holds_five_stocks_and_counts_the_search_trials(lab, built):
+    """D-029: the pre-fixed rule from AUTO-SP500's near misses, 20% per stock."""
+    bt = lab.quick_backtest(GAP)
+    e = lab.registry.experiment(bt.experiment_id)
+    assert e["metrics"]["window"][1] == "2019-12-31" and e["metrics"]["trades"]["n"] > 5
+    sh = bt.result.shares.drop(columns=["SPY", "BIL"], errors="ignore")
+    assert (sh.gt(0).sum(axis=1) <= 5).all()
+    out = lab.quick_final(GAP)
+    assert out.gates[0].verdict == "PASS", out.gates[0].reasons
+    if any(g.gate == "GATE3" for g in out.gates):
+        assert out.metrics["holdout"]["dsr_trials"] >= 41853
+        assert lab.auto_search().holdout_reads("AUTO-SP500") == 1

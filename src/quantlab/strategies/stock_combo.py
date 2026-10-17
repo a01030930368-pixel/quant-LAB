@@ -36,7 +36,7 @@ import pandas as pd
 
 from quantlab.strategies.base import MarketView, PartialWeights, Strategy
 
-CATALOGS = (1,)
+CATALOGS = (1, 2)  # 2 adds 5 slots (D-029); catalog 1 keeps its meaning
 BENCHMARK = "SPY"
 PARAMS = ("entry", "hold", "stop", "take", "slots")
 KEYS = ("catalog", "park", "park_band")
@@ -69,7 +69,7 @@ LADDERS = (("earn3", "earn5", "earn8"), ("ins1", "ins2"), ("drop5", "drop10"), (
 HOLDS = (5, 10, 20, 30, 60)
 STOPS = (0, 0.1, 0.2)
 TAKES = (0, 0.1, 0.2)
-SLOTS = (10, 20)
+SLOTS = {1: (10, 20), 2: (5, 10, 20)}
 
 
 def entries(catalog: int = 1) -> list[str]:
@@ -85,7 +85,7 @@ def entries(catalog: int = 1) -> list[str]:
 
 def full_space(catalog: int = 1) -> dict[str, list]:
     return {"entry": entries(catalog), "hold": list(HOLDS), "stop": list(STOPS), "take": list(TAKES),
-            "slots": list(SLOTS)}
+            "slots": list(SLOTS[catalog])}
 
 
 def catalog_of(rules: dict) -> int:

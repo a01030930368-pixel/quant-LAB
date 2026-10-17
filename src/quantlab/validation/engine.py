@@ -258,7 +258,7 @@ def validate(make: StrategyFactory, params: dict, data: MarketData, policy_hash:
         bp = g3p["bootstrap"]
         boot = M.block_bootstrap_sharpe_diff(rs, rb, rf, bp["block"], bp["n_boot"], bp["seed"])
         changes = _position_changes(full_s.signals, hs, he)
-        n_trials = registry.count_trials_for_family(family) + 1
+        n_trials = registry.count_trials_for_family(family) + 1 + int(policy.get("prior_trials", 0))
         # DSR needs the cross-trial variance of Sharpe ratios; with a single trial it equals PSR(0).
         # Multi-trial DSR is reported once families run parameter searches (not used for verdicts in v1).
         ho.update({"bootstrap": boot, "position_changes": changes, "prior_holdout_accesses": prior,
