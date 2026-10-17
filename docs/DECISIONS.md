@@ -353,3 +353,15 @@ gross per trade, but SPY gained +0.88% over the same 20 sessions (excess +0.23%,
   t-value) read on the return over SPY held for the same days (`versus: SPY`), so market drift does
   not pass as an edge. prior_trials 2 (INS-CLUSTER, PEAD-SP500). Holdout 2020+, final evaluation by
   the user only.
+
+## D-029 · 2026-10-17 · One pre-fixed rule from AUTO-SP500 (GAP-EARN-SP500)
+- AUTO-SP500 ran all 41,850 combinations: 0 candidates. 97.5% of the 691 near misses that failed
+  only the t-value contain an opening gap-up; earn8+gap5 cleared every other filter in 50 of its 54
+  exit settings (Sharpe about 0.9 vs SPY 0.88: most equity sat in SPY between rare signals).
+- The user chose to test a concentrated version before any holdout read. Fixed before running:
+  earn8+gap5, hold 30, no stop or take, 5 slots (20% each), park SPY with park_band 1. Catalog 2 of
+  `stock_combo` adds 5 slots; catalog 1 is unchanged.
+- Policy `gap_earn_v1`: auto_sp500_v1's splits, costs and gates; `prior_trials: 41852` is added to
+  the final evaluation's trial count (validate now reads a policy's `prior_trials`). AUTO-SP500 and
+  GAP-EARN-SP500 share one holdout (SHARED_HOLDOUT).
+- Evidence order: the 2010-2019 backtest first; the user decides whether to read the 2020+ holdout.

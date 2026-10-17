@@ -1,0 +1,59 @@
+# One pre-fixed rule from the AUTO-SP500 search (D-029), written 2026-10-17 before any run of it.
+# The search's near misses cluster on an opening gap-up after earnings: "earnings reaction at least
+# +8% over SPY" + "opened at least +5% over the previous close" (earn8+gap5) cleared every filter but
+# the t-value in 50 of its 54 exit settings, yet with 10-20 slots most equity sat in SPY and the
+# account's Sharpe stayed near SPY's. Fixed here, chosen by rule and not by the best row:
+#   - entry earn8+gap5 (the most frequent t-only entry with the highest median t);
+#   - hold 30 sessions, no stop, no take (the middle holding period; no exit add-ons);
+#   - 5 slots (20% per stock): the one change, to put more equity in the signal.
+# The holdout (2020+) of these stocks is unread; the policy counts the search's 41,850 trials, and the
+# automatic-search page treats this rule's final evaluation as the AUTO-SP500 holdout read.
+spec_version: 1
+strategy:
+  id: GAP-EARN-SP500
+  version: 1.0.0
+  name: 실적 갭 상승 (S&P 500, 5종목 20%씩, 쉬는 돈 SPY)
+  type: event
+  author: claude
+  parent: AUTO-SP500@1.0.0
+  derived_after_holdout_view: false
+hypothesis:
+  class: data_mining
+  economic_rationale: >
+    Post-earnings drift is strongest after large surprises that the market prices with a jump at the
+    open (earnings-announcement gaps; Chan, Jegadeesh & Lakonishok 1996; Brandt et al. 2008). The
+    AUTO-SP500 search found this combination robust across exit settings on 2010-2019; concentrating
+    equity in it tests whether the per-trade edge over SPY carries to the account.
+  expected_risks:
+    - selected from 41,850 trials (the final evaluation counts them)
+    - 20% per stock: single-stock gaps down and earnings-season bunching deepen drawdowns
+    - signals are rare (about 35 a year), so results rest on a few hundred trades
+    - 0.6% round-trip cost per trade
+  falsification: >
+    On the holdout (2020-01 onward), net Sharpe not above SPY buy-and-hold with block-bootstrap
+    p < 0.10, or max drawdown above 80% of SPY's.
+universe:
+  market: US_STOCK
+  index: SP500
+  symbols: [SPY, BIL]
+  frequency: daily
+rules:
+  kind: declarative
+  stock_combo:
+    catalog: 2
+    park: SPY
+    park_band: 1               # one slot is 20% of equity: put idle cash back into SPY once a slot is free
+execution:
+  signal_time: close
+  fill: next_open
+  rebalance: daily
+parameters:
+  entry: {default: earn8+gap5}
+  hold: {default: 30}
+  stop: {default: 0}
+  take: {default: 0}
+  slots: {default: 5}
+benchmark: SPY_buy_and_hold
+costs: {one_way_bps: 30}   # informational; the validation policy's costs are binding
+validation:
+  policy: gap_earn_v1

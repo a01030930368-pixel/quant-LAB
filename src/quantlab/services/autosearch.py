@@ -43,7 +43,9 @@ from quantlab.validation.engine import BuyAndHold, _cfg, _rf, dev_data
 
 GROUPS = ("AUTO-DEVA", "AUTO-DEVB", "AUTO-EM", "AUTO-REAL", "AUTO-LEV", "AUTO-LEVP", "AUTO-SP500")
 # groups that trade the same ETFs share one holdout: only one final evaluation across them
-SHARED_HOLDOUT = {"AUTO-LEV": ("AUTO-LEV", "AUTO-LEVP"), "AUTO-LEVP": ("AUTO-LEV", "AUTO-LEVP")}
+SHARED_HOLDOUT = {"AUTO-LEV": ("AUTO-LEV", "AUTO-LEVP"), "AUTO-LEVP": ("AUTO-LEV", "AUTO-LEVP"),
+                  # the pre-fixed rule taken from this search's near misses (D-029) reads the same holdout
+                  "AUTO-SP500": ("AUTO-SP500", "GAP-EARN-SP500")}
 
 # filter code -> Korean label, in the order they are checked
 FILTERS = [
