@@ -1,7 +1,9 @@
 """자동 연구 공장 (D-033): the automatic search of AUTO-SP500X, run without the window.
 
-Windows Task Scheduler starts `QuantLab.exe --factory` when the user signs in (and once an hour, in
-case it was closed); the process lowers its own priority, so the user's other programs come first,
+Windows Task Scheduler starts `QuantLab.exe --factory` when the user signs in, when the charger is
+plugged in, and once an hour in case it was closed, never on battery; the process stops itself within
+half a minute of the charger being unplugged (finished trials are kept, the unfinished ones run again
+on the next start). It lowers its own priority, so the user's other programs come first,
 and runs the search 3,000 combinations at a time until the whole grid is tried, the user switches
 the factory off, or the PC shuts down. It never needs Claude and never reads the holdout (the
 search sees TRAIN+VALIDATION only; the 2020+ holdout of these stocks was spent by GAP-EARN-SP500).
@@ -54,6 +56,23 @@ def low_priority() -> None:
             os.nice(10)
         except OSError:
             pass
+
+
+def on_battery() -> bool:
+    """Windows laptop unplugged. The user asked for the factory to run on the charger only; a desktop
+    or an unknown state counts as plugged in."""
+    if os.name != "nt":
+        return False
+    import ctypes
+
+    class PowerStatus(ctypes.Structure):
+        _fields_ = [("ac_line", ctypes.c_ubyte), ("battery_flag", ctypes.c_ubyte), ("battery_percent", ctypes.c_ubyte),
+                    ("system_status", ctypes.c_ubyte), ("lifetime", ctypes.c_ulong), ("full_lifetime", ctypes.c_ulong)]
+
+    st = PowerStatus()
+    if not ctypes.windll.kernel32.GetSystemPowerStatus(ctypes.byref(st)):
+        return False
+    return st.ac_line == 0
 
 
 class FactoryBusy(RuntimeError):
@@ -167,7 +186,7 @@ class Factory:
                 if time.time() - last[0] >= CHECK_SECONDS:
                     last[0] = time.time()
                     self.path("running.lock").touch()
-                    last[1] = self.enabled()
+                    last[1] = self.enabled() and not on_battery()
                 return not last[1]
 
             runs = 0
@@ -249,7 +268,7 @@ class Factory:
         return {"enabled": self.enabled(), "running": self.running(), "finished": self.finished(),
                 "done": last["done"] if last else 0, "grid": last["grid"] if last else None,
                 "candidates": last["candidates"] if last else 0, "last": last,
-                "watch": len(self.watch()), "error": self.last_error()}
+                "watch": len(self.watch()), "error": self.last_error(), "battery": on_battery()}
 
 
 def report_text(n: dict) -> str:

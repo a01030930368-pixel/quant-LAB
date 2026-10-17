@@ -438,3 +438,7 @@ gross per trade, but SPY gained +0.88% over the same 20 sessions (excess +0.23%,
   limit, until switched off or done. The user asked for continuous running instead of nightly, and
   for no weekly report: the app shows a report when the whole grid is done, and a notice at once if
   a full candidate appears. Files in `<work folder>/factory/`.
+- 2026-10-17, after release: the user's PC is a laptop and they asked for the factory to run only on
+  the charger. The task is never started on battery and is started again on the power-source event
+  (Kernel-Power 105); a running factory stops itself within 30 seconds of being unplugged (the
+  switch stays on, unfinished trials run again next time).
