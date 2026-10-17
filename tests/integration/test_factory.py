@@ -129,6 +129,7 @@ def test_factory_text_and_report():
     assert "498,744개 중 3,000개 시험 (0.6%)" in factory_text(p) and "돌고 있어요" in factory_text(p)
     assert "꺼져" in factory_text(p | {"enabled": False, "running": False})
     assert "모두 시험" in factory_text(p | {"finished": True})
+    assert "충전기" in factory_text(p | {"running": False, "battery": True})
     rep = {"kind": "finished", "at": "2026-11-01 09:00", "grid": 498744, "done": 498744, "family_trials": 540597,
            "t_required": 5.3, "candidates": 0, "funnel": [("거래 수 부족", 10), ("이웃 조합이 버티지 못함", 0)],
            "best_near": [{"rule": "규칙", "t": 4.1, "cagr": 0.15, "mdd": -0.3}], "watch": 5, "began": "2026-10-18 09:00",
@@ -150,6 +151,9 @@ def test_factory_task_starts_at_sign_in_and_hourly_with_no_time_limit():
     assert root.find(".//t:ExecutionTimeLimit", NS).text == "PT0S"
     assert root.find(".//t:MultipleInstancesPolicy", NS).text == "IgnoreNew"
     assert root.find(".//t:Exec/t:Arguments", NS).text == "--factory"
+    # charger only: never started on battery, started again when the power source changes
+    assert root.find(".//t:DisallowStartIfOnBatteries", NS).text == "true"
+    assert "EventID=105" in root.find(".//t:EventTrigger/t:Subscription", NS).text
     assert root.find(".//t:Exec/t:Command", NS).text == r"C:\Q & L\QuantLab.exe"
 
 
@@ -254,5 +258,39 @@ def test_factory_reports_once_when_the_grid_is_done(tmp_path, monkeypatch):
         assert len(news) == 1 and news[0]["kind"] == "finished"
         assert "10개" in F.report_text(news[0])
         assert json.loads(f.path("finished.json").read_text(encoding="utf-8"))["strategy_hash"] == "hash-1"
+    finally:
+        lab.close()
+
+
+def test_factory_stops_when_the_charger_is_unplugged(tmp_path, monkeypatch):
+    lab = Lab(tmp_path / "QL")
+    try:
+        f = lab.factory()
+        f.set_enabled(True)
+        power = {"battery": False}
+        calls = []
+
+        class FakeAuto:
+            def loaded(self, group):
+                return "h", None
+
+            def trials(self, group):
+                return {}
+
+            def run(self, group, workers=0, should_stop=None, limit=None):
+                calls.append(1)
+                power["battery"] = True  # unplugged during the run
+                assert should_stop()
+                return {"done": 3, "grid": 10, "candidates": [], "near": [], "t_required": 5.0, "stopped": True}
+
+        monkeypatch.setattr(lab, "auto_search", lambda: FakeAuto())
+        monkeypatch.setattr(F, "low_priority", lambda: None)
+        monkeypatch.setattr(F, "on_battery", lambda: power["battery"])
+        monkeypatch.setattr(F, "CHECK_SECONDS", 0)
+        assert f.run() == "stopped" and calls == [1]
+        assert f.run() == "stopped" and calls == [1]  # on battery: does not start
+        assert f.enabled()                              # the switch stays on; it resumes on the charger
+        power["battery"] = False
+        assert f.run(max_runs=1) in ("stopped", "max_runs") and len(calls) == 2
     finally:
         lab.close()

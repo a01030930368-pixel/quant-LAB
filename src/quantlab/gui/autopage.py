@@ -70,7 +70,9 @@ def factory_text(p: dict) -> str:
     elif not p["enabled"]:
         text = "꺼져 있어요." + (f" 지금까지 {p['done']:,}개 시험." if p["done"] else "")
     else:
-        state = "돌고 있어요" if p["running"] else "켜져 있어요 (PC 로그인 뒤 몇 분 안에, 또는 한 시간 안에 시작)"
+        state = ("돌고 있어요" if p["running"] else
+                 "충전기를 뽑아서 쉬는 중이에요 (꽂으면 1분쯤 뒤 이어서 해요)" if p.get("battery") else
+                 "켜져 있어요 (PC 로그인 뒤 몇 분 안에, 또는 한 시간 안에 시작)")
         text = state
         if p["grid"]:
             text += f" · {p['grid']:,}개 중 {p['done']:,}개 시험 ({p['done'] / p['grid'] * 100:.1f}%)"
@@ -110,7 +112,7 @@ class AutoPage(Page):
         frow = QHBoxLayout()
         frow.addWidget(label("자동 연구 공장", "ph"))
         frow.addSpacing(12)
-        self.factory_on = QCheckBox("켜기: PC가 켜져 있으면 앱을 열지 않아도 계속 시험 (다른 작업에 CPU를 양보)")
+        self.factory_on = QCheckBox("켜기: PC가 켜져 있고 충전기가 꽂혀 있으면 앱을 열지 않아도 계속 시험 (다른 작업에 CPU를 양보)")
         self.factory_on.toggled.connect(self._factory_toggled)
         frow.addWidget(self.factory_on)
         frow.addStretch()

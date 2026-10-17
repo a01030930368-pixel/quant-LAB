@@ -5,9 +5,10 @@ open in case the stock bundle was late). A run missed while the PC was off start
 (StartWhenAvailable). It runs only while the user is signed in, as the user, so the Tiingo key in the
 Windows credential store and the work folder chosen in the app are the same ones.
 
-The research factory starts when the user signs in and is tried again every hour (a second copy is
-not started while one runs), with no time limit and a low priority; it ends by itself when the
-switch is off or the whole grid is tried.
+The research factory starts when the user signs in, when the charger is plugged in (power-source
+event 105) and every hour (a second copy is not started while one runs), never on battery, with no
+time limit and a low priority; it ends by itself when the switch is off, the charger is unplugged or
+the whole grid is tried.
 """
 
 from __future__ import annotations
@@ -62,6 +63,8 @@ def factory_xml(exe: str, start: date | None = None) -> str:
   <RegistrationInfo><Description>QUANT LAB: 자동 연구 공장 (S&amp;P 500 종목 규칙을 2010~2019년 자료로 계속 시험, 실제 주문 없음)</Description></RegistrationInfo>
   <Triggers>
     <LogonTrigger><Enabled>true</Enabled><Delay>PT5M</Delay></LogonTrigger>
+    <EventTrigger><Enabled>true</Enabled><Delay>PT1M</Delay>
+      <Subscription>&lt;QueryList&gt;&lt;Query Id="0" Path="System"&gt;&lt;Select Path="System"&gt;*[System[Provider[@Name='Microsoft-Windows-Kernel-Power'] and EventID=105]]&lt;/Select&gt;&lt;/Query&gt;&lt;/QueryList&gt;</Subscription></EventTrigger>
     <CalendarTrigger><StartBoundary>{start.isoformat()}T00:00:00</StartBoundary><Enabled>true</Enabled>
       <Repetition><Interval>PT1H</Interval><Duration>P1D</Duration></Repetition>
       <ScheduleByDay><DaysInterval>1</DaysInterval></ScheduleByDay></CalendarTrigger>
@@ -69,7 +72,7 @@ def factory_xml(exe: str, start: date | None = None) -> str:
   <Principals><Principal id="Author"><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>
   <Settings>
     <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
-    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <DisallowStartIfOnBatteries>true</DisallowStartIfOnBatteries>
     <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
     <StartWhenAvailable>true</StartWhenAvailable>
     <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
