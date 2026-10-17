@@ -1,0 +1,55 @@
+# Turn-of-the-month rule on US sector 3x ETFs (D-032, idea C of the 2026-10-16 plan). Fixed
+# 2026-10-17 before any run of a calendar rule in this project. Nothing is searched: one rule, one trial.
+# Why 3x funds: the effect is about +0.1% a day on the market (4 sessions a month), far below the
+# 0.6% round-trip cost on 1x funds; on 3x funds the window should earn about 1.2-1.5% before costs.
+# Why half the equity: at 7 x 7.14% the window holds 50% in 3x funds (about 1.5x the market for four
+# sessions); all-in would put a 2011-08-style week at -20% or worse. The other half stays in BIL.
+# The funds are OSR-SECT3X's. Their 2010-2019 prices were seen for that rule; their 2020+ prices were
+# never read in this project, so the holdout of this family is unread.
+spec_version: 1
+strategy:
+  id: CAL-TOM-SECT3X
+  version: 1.0.0
+  name: 월말·월초 4일 3배 업종 ETF (절반, 나머지 BIL)
+  type: calendar
+  author: claude
+  parent: null
+  derived_after_holdout_view: false
+hypothesis:
+  class: theory
+  economic_rationale: >
+    Stock returns concentrate around the turn of the month, from the last session of a month to the
+    third of the next (Ariel 1987; Lakonishok & Smidt 1988; McConnell & Xu 2008), linked to month-end
+    pay and fund flows (Ogden 1990; Etula, Rinne, Suominen & Vaittinen 2020). Holding leveraged sector
+    funds only in that window should earn the effect several times over while staying out of the market
+    about 80% of the time.
+  expected_risks:
+    - the effect may have weakened since it was published; 3x funds also lose to daily rebalancing in choppy weeks
+    - twelve round trips a year at 0.6% cost about 3.6% of equity a year at this size
+    - the seven funds move together; a crash inside a window hits all of them at once
+    - out of the market most of the time, so the yearly return can stay below SPY's even if the window works
+  falsification: >
+    On the holdout (2020-01 onward), net Sharpe not above SPY buy-and-hold with block-bootstrap p < 0.10,
+    or max drawdown above 80% of SPY's. Trade level: mean return per window before costs below the
+    1.2% bar or net mean at or below 0.
+universe:
+  market: US_ETF
+  symbols: [SOXL, TNA, FAS, ERX, TECL, DRN, CURE, SPY, BIL]
+  frequency: daily
+rules:
+  kind: declarative
+  calendar:
+    trade: [SOXL, TNA, FAS, ERX, TECL, DRN, CURE]
+    leg_weight: 0.0714
+    enter_before_end: 1
+    exit_session: 4
+    park: BIL
+execution:
+  signal_time: close
+  fill: next_open
+  rebalance: daily
+parameters: {}
+benchmark: SPY_buy_and_hold
+costs: {one_way_bps: 30}   # informational; the validation policy's costs are binding
+validation:
+  policy: cal_tom_v1

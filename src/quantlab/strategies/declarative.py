@@ -172,6 +172,12 @@ def validate_rules(rules: dict, symbols: list[str], rebalance: str) -> list[str]
         if rebalance != "daily":
             errs.append("earnings rules are judged every session: execution.rebalance must be daily")
         errs += validate_earnings(rules["earnings"], symbols)
+    elif "calendar" in rules:
+        from quantlab.strategies.calendar_tom import validate_calendar
+
+        if rebalance != "daily":
+            errs.append("calendar rules are judged every session: execution.rebalance must be daily")
+        errs += validate_calendar(rules["calendar"], symbols)
     elif "rank" in rules:
         rk = rules["rank"]
         if rk.get("score") not in ("momentum", "sma", "volatility"):
@@ -183,7 +189,7 @@ def validate_rules(rules: dict, symbols: list[str], rebalance: str) -> list[str]
         if set(rules.get("cash", {})) - set(symbols):
             errs.append("rules.cash uses symbols outside the universe")
     else:
-        errs.append("declarative rules need 'signal' (conditional), 'rank', 'entry_exit', 'combo', 'stock_combo', 'insider' or 'earnings'")
+        errs.append("declarative rules need 'signal' (conditional), 'rank', 'entry_exit', 'combo', 'stock_combo', 'insider', 'earnings' or 'calendar'")
     return errs
 
 

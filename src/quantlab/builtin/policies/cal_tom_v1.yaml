@@ -1,0 +1,45 @@
+# Validation policy for CAL-TOM-SECT3X (D-032): one pre-fixed turn-of-the-month rule on US sector 3x ETFs.
+# Written 2026-10-17 before any run of it. Splits, costs and gates are OSR-SECT3X's unchanged
+# (SOXL lists 2010-03, CURE 2011-06; the others 2008-2009). The forward holdout starts the day after
+# this policy was written and is the paper-trading check of the same rule.
+# Frozen: the registry stores its hash; changing anything requires version: 2.
+policy_id: cal_tom
+version: 1
+strategy_family: CAL-TOM-SECT3X
+universe: [SOXL, TNA, FAS, ERX, TECL, DRN, CURE, SPY, BIL]
+benchmark_symbol: SPY
+risk_free_symbol: BIL
+initial_cash: 100000
+
+splits:
+  train: ["2010-01-01", "2015-12-31"]
+  validation: ["2016-01-01", "2019-12-31"]
+  holdout: ["2020-01-01", null]
+  forward_holdout_start: "2026-10-18"
+
+costs:
+  commission_bps: 25.0          # user's standing rule (0.25% one-way)
+  slippage_bps: 5.0
+  fixed_fee: 0.0
+
+gate1:
+  leak_test_cutpoints: 5
+  leak_test_seed: 20261017
+
+gate2:
+  min_sharpe_diff: -0.10
+  max_mdd_ratio: 0.90
+  rule: "PASS if sharpe_diff >= min_sharpe_diff OR mdd_ratio <= max_mdd_ratio, else FAIL"
+
+gate3:
+  min_sharpe_diff: 0.0
+  bootstrap: {block: 63, n_boot: 10000, seed: 20261017, max_p_value: 0.10}
+  max_mdd_ratio: 0.80
+  min_position_changes: 6
+  min_sessions: 504
+
+gate4_partial:
+  stress_cost_multiplier: 2.0
+  stress_min_sharpe_diff: 0.0
+  neighbor_params: {}            # one pre-fixed rule; nothing is searched
+  neighbor_min_sharpe_diff: 0.0
