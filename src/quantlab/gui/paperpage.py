@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QGridLayout, QHBoxLayout, QHeaderView, QProgressBar,
+from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QGridLayout, QHBoxLayout, QHeaderView, QProgressBar,
                                QTableWidget)
 
 from quantlab.gui import theme
@@ -68,6 +68,14 @@ class PaperPage(Page):
         self.go_btn = button("오늘 자료로 갱신", "primary", self.refresh_now)
         head.addWidget(self.go_btn)
         self.body.addLayout(head)
+        auto = QHBoxLayout()
+        self.auto = QCheckBox("자동 갱신: 매일 08:30·21:00 (PC가 켜져 있고 로그인돼 있을 때, 놓친 시간은 켜지면 바로)")
+        self.auto.toggled.connect(self._auto_toggled)
+        auto.addWidget(self.auto)
+        auto.addStretch()
+        self.auto_last = label("", "muted")
+        auto.addWidget(self.auto_last)
+        self.body.addLayout(auto)
 
         self.progress = Card(12, 6)
         self.step = label("", "h3")
@@ -142,8 +150,47 @@ class PaperPage(Page):
 
     def _picked(self) -> None:
         r = self.current()
-        self.snap = self.lab.paper().latest(r["id"], r["version"]) if r else None
+        paper = self.lab.paper()
+        self.snap = paper.latest(r["id"], r["version"]) if r else None
+        from quantlab.services import scheduler
+
+        self.auto.blockSignals(True)
+        self.auto.setChecked(bool(r) and r["id"] in paper.auto_ids())
+        self.auto.blockSignals(False)
+        self.auto.setEnabled(bool(r) and scheduler.supported())
+        self.auto.setToolTip("" if scheduler.supported() else "설치된 Windows 앱에서만 쓸 수 있어요")
+        last = paper.last_auto()
+        self.auto_last.setText(f"마지막 자동 갱신 {last}" if last else "")
         self.render()
+
+    def _auto_toggled(self, on: bool) -> None:
+        r = self.current()
+        if not r:
+            return
+        from quantlab.services import scheduler
+
+        paper = self.lab.paper()
+        if on and not self.lab.has_api_key():
+            self.win.notify("자동 갱신에는 Tiingo API 키가 필요해요. 홈 화면에서 먼저 저장해 주세요.")
+            self.auto.setChecked(False)
+            return
+        if on and not self.win.home._ensure_sec_email(r["path"]):
+            self.auto.setChecked(False)
+            return
+        ids = paper.set_auto(r["id"], on)
+        try:
+            if ids:
+                scheduler.install()
+            else:
+                scheduler.remove()
+        except RuntimeError as e:
+            paper.set_auto(r["id"], not on)
+            self.auto.blockSignals(True)
+            self.auto.setChecked(not on)
+            self.auto.blockSignals(False)
+            self.win.notify(str(e))
+            return
+        self.win.status("자동 갱신을 켰어요" if on else "자동 갱신을 껐어요")
 
     def refresh_now(self) -> None:
         r = self.current()

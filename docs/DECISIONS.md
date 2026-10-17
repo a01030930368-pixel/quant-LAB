@@ -388,3 +388,17 @@ gross per trade, but SPY gained +0.88% over the same 20 sessions (excess +0.23%,
 - The 2020+ holdout of these stocks includes the paper period. Once paper results have been seen, a
   final evaluation over 2020+ is not blind for those months; the verdict on this rule comes from the
   forward data.
+
+## D-031 · 2026-10-17 · Automatic paper-trading refresh
+- The user asked not to have to press the refresh button every day. A checkbox on 모의 투자 registers a
+  Windows Task Scheduler entry (`quantlab.services.scheduler`) that runs `QuantLab.exe --paper-refresh`
+  at 08:30 and 21:00 on the PC's clock; a run missed while the PC was off starts when it is next on.
+  It runs as the signed-in user, so the stored Tiingo key and the chosen work folder are the same.
+- The run refreshes every rule switched on and appends one line per rule to `paper/auto.log`.
+  A lock file keeps the app and the scheduled run from refreshing at the same time.
+- The S&P 500 bundle is downloaded again only when it lacks the latest SPY session (and was fetched
+  over six hours earlier), so two runs a day do not mean two 200 MB downloads.
+- Missing a day loses nothing: each refresh recomputes from the start date, and fills first seen
+  late are recorded with the time they were seen.
+- Fixed on the way: re-importing a spec from its stored copy in the work folder (a spec added with
+  명세서 추가, then run from the strategy list) copied the file onto itself and failed.

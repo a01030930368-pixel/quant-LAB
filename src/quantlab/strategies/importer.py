@@ -63,7 +63,8 @@ def import_spec(path: str | Path, registry: Registry, strategies_dir: str | Path
     if strategies_dir is not None:
         dest = Path(strategies_dir) / loaded.strategy_hash[:16]
         dest.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(loaded.path, dest / loaded.path.name)
+        if not (dest / loaded.path.name).exists() or not (dest / loaded.path.name).samefile(loaded.path):
+            shutil.copy2(loaded.path, dest / loaded.path.name)  # re-importing the stored copy keeps it
         if loaded.code is not None:
             fname = loaded.spec["rules"]["entry"].split(":", 1)[0]
             (dest / fname).write_text(loaded.code, encoding="utf-8")
