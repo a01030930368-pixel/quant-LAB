@@ -363,6 +363,33 @@ def test_auto_search_on_index_stocks_runs_on_dev_data_only(lab, built):
     assert "excess" in m
 
 
+def test_research_factory_searches_catalog_3_on_dev_data_and_logs_each_run(lab, built, monkeypatch):
+    """D-033: one factory run of AUTO-SP500X on the index dataset."""
+    from quantlab.services import autosearch as A
+    from quantlab.services import factory as F
+    from quantlab.strategies import stock_combo as sc
+
+    seen = []
+    real = A.trial_metrics
+
+    def spy(factory, params, dev, policy):
+        seen.append((dev.calendar[-1], params["entry"]))
+        return real(factory, params, dev, policy)
+
+    monkeypatch.setattr(A, "trial_metrics", spy)
+    monkeypatch.setattr(F, "low_priority", lambda: None)
+    f = lab.factory()
+    f.set_enabled(True)
+    assert f.run(max_runs=1, limit=3, workers=1) == "max_runs"
+    assert max(d for d, _ in seen) <= pd.Timestamp("2019-12-31")
+    assert not any(sc.already_tried(p, 3) for p in (v["params"] for v in lab.auto_search().trials("AUTO-SP500X").values()))
+    row = f.log()[-1]
+    assert row["tried"] == 3 and row["grid"] == 540594 - 41850
+    out = lab.auto_search().summary("AUTO-SP500X")
+    assert out["family_trials"] >= 3 + 41853
+    f.set_enabled(False)
+
+
 GAP = builtin_path("specs", "GAP-EARN-SP500.qls.yaml")
 
 

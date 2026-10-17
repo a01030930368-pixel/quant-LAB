@@ -41,11 +41,13 @@ from quantlab.strategies.spec import load_spec
 from quantlab.validation import metrics as M
 from quantlab.validation.engine import BuyAndHold, _cfg, _rf, dev_data
 
-GROUPS = ("AUTO-DEVA", "AUTO-DEVB", "AUTO-EM", "AUTO-REAL", "AUTO-LEV", "AUTO-LEVP", "AUTO-SP500")
+GROUPS = ("AUTO-DEVA", "AUTO-DEVB", "AUTO-EM", "AUTO-REAL", "AUTO-LEV", "AUTO-LEVP", "AUTO-SP500", "AUTO-SP500X")
 # groups that trade the same ETFs share one holdout: only one final evaluation across them
 SHARED_HOLDOUT = {"AUTO-LEV": ("AUTO-LEV", "AUTO-LEVP"), "AUTO-LEVP": ("AUTO-LEV", "AUTO-LEVP"),
                   # the pre-fixed rule taken from this search's near misses (D-029) reads the same holdout
-                  "AUTO-SP500": ("AUTO-SP500", "GAP-EARN-SP500")}
+                  "AUTO-SP500": ("AUTO-SP500", "GAP-EARN-SP500", "AUTO-SP500X"),
+                  # the research factory searches the same stocks after that holdout was read (D-033)
+                  "AUTO-SP500X": ("AUTO-SP500", "GAP-EARN-SP500", "AUTO-SP500X")}
 
 # filter code -> Korean label, in the order they are checked
 FILTERS = [
@@ -87,6 +89,45 @@ def blocks(loaded):
     if "stock_combo" in rules:
         return stock_combo, rules["stock_combo"]
     return combo, rules["combo"]
+
+
+class LazyGrid:
+    """The full grid of a generator spec in a fixed shuffled order, without building it.
+
+    For grids too large to hold as a list (D-033, `auto_search.order: affine`): combination i of the
+    shuffled order is combination (a*i + b) mod N of the plain product order, with a coprime to N and
+    a, b drawn from the policy's seed. Combinations the block module says were already run elsewhere
+    (`already_tried`) are skipped."""
+
+    def __init__(self, space: dict[str, list], seed: int, skip=None) -> None:
+        self.names = sorted(space)
+        self.lists = [list(space[n]) for n in self.names]
+        self.n = int(np.prod([len(v) for v in self.lists], dtype=np.int64)) if self.lists else 1
+        rng = np.random.default_rng(seed)
+        a = int(rng.integers(1, max(self.n, 2)))
+        while math.gcd(a, self.n) != 1:
+            a += 1
+        self.a, self.b = a, int(rng.integers(0, max(self.n, 1)))
+        self.skip = skip
+
+    def at(self, i: int) -> dict:
+        j = (self.a * i + self.b) % self.n
+        out = {}
+        for name, values in zip(reversed(self.names), reversed(self.lists)):
+            j, r = divmod(j, len(values))
+            out[name] = values[r]
+        return {k: out[k] for k in self.names}
+
+    def __iter__(self):
+        for i in range(self.n):
+            p = self.at(i)
+            if self.skip is None or not self.skip(p):
+                yield key(p), p
+
+    def size(self) -> int:
+        if self.skip is None:
+            return self.n
+        return self.n - sum(1 for i in range(self.n) if self.skip(self.at(i)))
 
 
 def required_t(n_trials: int, alpha: float) -> float:
@@ -250,10 +291,19 @@ class AutoSearch:
         """The fixed order of the whole grid (pre-registered by the spec, the catalog and the seed)."""
         return [p for _, p in self._keyed_order(loaded, policy)]
 
-    def _keyed_order(self, loaded, policy: dict) -> list[tuple[str, dict]]:
+    def _keyed_order(self, loaded, policy: dict):
         from quantlab.services.batch import grid
 
         seed = int(policy["auto_search"]["order_seed"])
+        if policy["auto_search"].get("order") == "affine":
+            with _LOCK:
+                if (loaded.strategy_hash, seed) not in _ORDER:
+                    mod, block = blocks(loaded)
+                    cat = mod.catalog_of(block)
+                    skip = getattr(mod, "already_tried", None)
+                    _ORDER[(loaded.strategy_hash, seed)] = LazyGrid(
+                        loaded.search_space, seed, (lambda p: skip(p, cat)) if skip else None)
+                return _ORDER[(loaded.strategy_hash, seed)]
         with _LOCK:
             if (loaded.strategy_hash, seed) not in _ORDER:
                 g = grid(loaded.search_space)
@@ -345,7 +395,13 @@ class AutoSearch:
             batch_id = pending[0]["id"][0]
             todo = [(v["id"][1], v["params"], v["id"][0]) for v in pending]
         else:
-            fresh = [p for k, p in self._keyed_order(loaded, policy) if k not in known][: int(limit or auto["trials_per_run"])]
+            want = int(limit or auto["trials_per_run"])
+            fresh = []
+            for k, p in self._keyed_order(loaded, policy):
+                if k not in known:
+                    fresh.append(p)
+                    if len(fresh) >= want:
+                        break
             if not fresh:
                 return self.summary(group) | {"note": "이 묶음의 조합을 모두 시험했습니다."}
             batch_id = f"A-{datetime.now(timezone.utc):%Y%m%d%H%M%S}-{uuid.uuid4().hex[:6]}"
@@ -480,7 +536,8 @@ class AutoSearch:
                                  spy_label if fail == "spy" else FILTER_LABEL[fail]})
         rows.sort(key=lambda r: -(r.get("t") or 0))
         near.sort(key=lambda r: (not r["preregistered"], -math.inf if r.get(metric) is None else -r[metric]))
-        grid_size = len(self._keyed_order(loaded, policy))
+        order = self._keyed_order(loaded, policy)
+        grid_size = self._grid_size(loaded, order)
         done = sum(1 for v in known.values() if v["status"] == "done")
         reads = self.holdout_reads(group)
         return {"group": group, "name": loaded.spec["strategy"]["name"], "strategy_hash": strategy_hash,
@@ -500,6 +557,15 @@ class AutoSearch:
         _, policy = self.lab.policy_for(loaded)
         version = self.lab.ensure_spec_dataset(loaded, policy)
         return self.lab.backtest(strategy_hash, version, params)
+
+    def _grid_size(self, loaded, order) -> int:
+        if not isinstance(order, LazyGrid):
+            return len(order)
+        with _LOCK:
+            cache = _ORDER.setdefault(("size", loaded.strategy_hash), [])
+            if not cache:
+                cache.append(order.size())
+            return cache[0]
 
     def holdout_reads(self, group: str) -> int:
         """Final evaluations already run on this group's holdout (and on groups sharing it)."""

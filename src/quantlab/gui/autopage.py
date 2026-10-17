@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QButtonGroup, QCheckBox, QFile
 from quantlab.gui import theme
 from quantlab.gui.home import Card, KeepColors, Page, button, cell, hline, kpi_strip, label, pane_header, pct
 from quantlab.services.autosearch import GROUPS
+from quantlab.services.factory import GROUP as FACTORY_GROUP
 
 NEAR_SHOWN = 500  # near misses listed on the page; the CSV has all of them
 
@@ -44,7 +45,8 @@ def _keep_awake(on: bool) -> None:
 
 
 GROUP_NAME = {"AUTO-DEVA": "선진국 A", "AUTO-DEVB": "선진국 B", "AUTO-EM": "신흥국", "AUTO-REAL": "채권·금·원자재·리츠",
-             "AUTO-LEV": "3배 ETF", "AUTO-LEVP": "3배 ETF + 쉬는 돈 SPY", "AUTO-SP500": "S&P 500 종목"}
+             "AUTO-LEV": "3배 ETF", "AUTO-LEVP": "3배 ETF + 쉬는 돈 SPY", "AUTO-SP500": "S&P 500 종목",
+             "AUTO-SP500X": "S&P 500 종목 · 공장"}
 GROUP_NOTE = {
     "AUTO-DEVA": "일본·독일·영국·캐나다·호주·프랑스·스위스·홍콩·싱가포르 ETF 9종",
     "AUTO-DEVB": "스웨덴·네덜란드·스페인·이탈리아·벨기에·오스트리아 ETF 6종",
@@ -55,7 +57,28 @@ GROUP_NOTE = {
                  "3배 ETF 묶음과 보류 구간을 함께 써서 최종 평가는 둘 중 하나만 가능",
     "AUTO-SP500": "그날 S&P 500에 속한 종목. 실적 반응·내부자 매수·급락·RSI·갭 상승·200일선·SPY 추세·52주 신고가 중 "
                   "1~3개를 겹친 조건. 거래마다 같은 기간 SPY보다 얼마나 더 벌었는지로 거르고, 쉬는 돈은 SPY",
+    "AUTO-SP500X": "자동 연구 공장의 묶음. S&P 500 종목 재료 28개(실적 실망·하락 갭·52주 신저가·연속 하락·변동성 수축 등 추가) "
+                   "중 1~3개. 앞 묶음이 이미 시험한 조합은 건너뛰고, 통과하면 앞으로의 자료로 모의 투자해요 "
+                   "(2020년 이후 보류 구간은 이미 썼어요)",
 }
+
+
+def factory_text(p: dict) -> str:
+    """One line under the factory switch: progress only (the user gets a report when it is done)."""
+    if p["finished"]:
+        text = f"목록을 모두 시험했어요 ({p['done']:,}개). 새 재료가 들어올 때까지 쉬어요."
+    elif not p["enabled"]:
+        text = "꺼져 있어요." + (f" 지금까지 {p['done']:,}개 시험." if p["done"] else "")
+    else:
+        state = "돌고 있어요" if p["running"] else "켜져 있어요 (PC 로그인 뒤 몇 분 안에, 또는 한 시간 안에 시작)"
+        text = state
+        if p["grid"]:
+            text += f" · {p['grid']:,}개 중 {p['done']:,}개 시험 ({p['done'] / p['grid'] * 100:.1f}%)"
+    if p["done"]:
+        text += f" · 통과 {p['candidates']}개 · 모의 투자 중 {p['watch']}개"
+    if p.get("error") and not p["running"]:
+        text += f"\n마지막 오류: {p['error']}"
+    return text
 
 
 class AutoPage(Page):
@@ -82,6 +105,19 @@ class AutoPage(Page):
             "앱이 재료(진입 신호·추세 조건·청산 규칙·보유 기간·손절·익절)를 조합해 TRAIN+VALIDATION 구간에서만 시험하고, "
             "걸러내는 기준을 모두 통과한 조합만 후보로 남깁니다. 시험한 개수만큼 통과 기준(t값)이 높아집니다. "
             "최종 평가(맨 뒤 보류 구간)는 앱이 스스로 열지 않습니다.", "muted", wrap=True))
+
+        fac = Card(16, 8)
+        frow = QHBoxLayout()
+        frow.addWidget(label("자동 연구 공장", "ph"))
+        frow.addSpacing(12)
+        self.factory_on = QCheckBox("켜기: PC가 켜져 있으면 앱을 열지 않아도 계속 시험 (다른 작업에 CPU를 양보)")
+        self.factory_on.toggled.connect(self._factory_toggled)
+        frow.addWidget(self.factory_on)
+        frow.addStretch()
+        fac.lay.addLayout(frow)
+        self.factory_line = label("", "muted", wrap=True)
+        fac.lay.addWidget(self.factory_line)
+        self.body.addWidget(fac)
 
         seg = QHBoxLayout()
         seg.setSpacing(0)
@@ -198,10 +234,49 @@ class AutoPage(Page):
         self.seg_buttons[group].setChecked(True)
         self.refresh()
 
+    def factory_refresh(self) -> None:
+        from quantlab.services import scheduler
+
+        f = self.lab.factory()
+        p = f.progress()
+        self.factory_on.blockSignals(True)
+        self.factory_on.setChecked(p["enabled"])
+        self.factory_on.blockSignals(False)
+        self.factory_on.setEnabled(scheduler.supported())
+        self.factory_on.setToolTip("" if scheduler.supported() else "설치된 Windows 앱에서만 쓸 수 있어요")
+        self.factory_line.setText(factory_text(p))
+
+    def _factory_toggled(self, on: bool) -> None:
+        from quantlab.services import scheduler
+
+        f = self.lab.factory()
+        if on and self.running and self.group == FACTORY_GROUP:
+            self.win.notify("이 화면에서 공장 묶음을 탐색하는 중이에요. 멈춘 뒤에 공장을 켜 주세요.")
+            self.factory_refresh()
+            return
+        f.set_enabled(on)
+        try:
+            if on:
+                scheduler.install()  # the factory's rules are paper traded every day
+                scheduler.install_factory()
+            else:
+                scheduler.remove_factory()
+                if not self.lab.paper().auto_ids():
+                    scheduler.remove()
+        except RuntimeError as e:
+            f.set_enabled(not on)
+            self.win.notify(str(e))
+        self.factory_refresh()
+        self.win.status("자동 연구 공장을 켰어요" if on else "자동 연구 공장을 껐어요 (지금 시험 중인 조합까지 하고 멈춰요)")
+
     def refresh(self) -> None:
         """Read the group's summary off the window thread (the first read of a large group takes a
         while; later reads only add the trials written since) and show it when it arrives."""
         self.group_note.setText(GROUP_NOTE.get(self.group, ""))
+        try:
+            self.factory_refresh()
+        except Exception as e:  # noqa: BLE001 - the search page must open even if the factory files are damaged
+            self.factory_line.setText(f"공장 상태를 읽지 못했어요: {e}")
         if self.win.runner.sync:
             try:
                 self._show(self.lab.auto_search().summary(self.group))
@@ -341,6 +416,9 @@ class AutoPage(Page):
             return
         from quantlab.gui.main_window import _Job, _Signals
 
+        if self.group == FACTORY_GROUP and self.lab.factory().running():
+            self.win.notify("자동 연구 공장이 이 묶음을 시험하고 있어요. 공장을 끄면 여기서 직접 돌릴 수 있어요.")
+            return
         self.running, self._stop = True, False
         _keep_awake(True)
         self._buttons()

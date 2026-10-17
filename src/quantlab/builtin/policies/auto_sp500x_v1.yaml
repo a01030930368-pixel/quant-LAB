@@ -1,0 +1,65 @@
+# Validation policy for AUTO-SP500X (D-033): the automatic research factory on point-in-time S&P 500
+# stocks, written 2026-10-17 at the user's request ("끊임 없이 자동으로 퀀트 전략을 만들고 백테스트").
+# AUTO-SP500's splits, costs, gates and search filters unchanged. Differences: the grid (540,594
+# combinations) is walked in a fixed affine order instead of a stored shuffle; prior_trials counts
+# AUTO-SP500's 41,850 trials (the combinations this search skips), INS-CLUSTER, PEAD-SP500 and
+# GAP-EARN-SP500. The holdout is shared with AUTO-SP500 and was spent by GAP-EARN-SP500's final
+# evaluation, so candidates are judged on forward paper data only.
+# Frozen: the registry stores its hash; changing anything requires version: 2.
+policy_id: auto_sp500x
+version: 1
+strategy_family: AUTO-SP500X
+universe: [SP500, SPY, BIL]
+benchmark_symbol: SPY
+risk_free_symbol: BIL
+initial_cash: 100000
+
+splits:
+  train: ["2010-01-01", "2015-12-31"]
+  validation: ["2016-01-01", "2019-12-31"]
+  holdout: ["2020-01-01", null]
+  forward_holdout_start: "2026-10-19"
+
+costs:
+  commission_bps: 25.0          # user's standing rule (0.25% one-way)
+  slippage_bps: 5.0
+  fixed_fee: 0.0
+
+gate1:
+  leak_test_cutpoints: 5
+  leak_test_seed: 20261016
+
+gate2:
+  min_sharpe_diff: -0.10
+  max_mdd_ratio: 0.90
+  rule: "PASS if sharpe_diff >= min_sharpe_diff OR mdd_ratio <= max_mdd_ratio, else FAIL"
+
+gate3:
+  min_sharpe_diff: 0.0
+  bootstrap: {block: 63, n_boot: 10000, seed: 20261016, max_p_value: 0.10}
+  max_mdd_ratio: 0.80
+  min_position_changes: 6
+  min_sessions: 504
+
+gate4_partial:
+  stress_cost_multiplier: 2.0
+  stress_min_sharpe_diff: 0.0
+  neighbor_params: {}            # neighbours are checked during the search (TRAIN+VALIDATION), see auto_search
+  neighbor_min_sharpe_diff: 0.0
+
+auto_search:
+  trials_per_run: 3000
+  order: affine                 # fixed affine walk of the full grid; each run takes the next untried combinations
+  order_seed: 20261017
+  prior_trials: 41853           # AUTO-SP500 41,850, INS-CLUSTER, PEAD-SP500, GAP-EARN-SP500
+  min_trades_train: 40
+  min_trades_validation: 20
+  min_gross_per_trade: 0.012    # before costs, over SPY: twice the 0.6% round trip
+  stress_cost_multiplier: 2.0   # CAGR must stay above 0 at twice the costs
+  max_drawdown_floor: -0.35
+  beat_symbol: SPY
+  beat_metric: cagr             # CAGR (rule + SPY on idle equity) above SPY buy-and-hold's
+  park_symbol: SPY              # idle equity is held in SPY (spec: rules.stock_combo.park)
+  versus: SPY                   # per-trade gross, top-10 and t-value read the return over SPY
+  alpha: 0.05                   # one-sided; Bonferroni over the family's trial count (incl. prior_trials)
+  neighbour_min_share: 0.5

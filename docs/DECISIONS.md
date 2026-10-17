@@ -417,3 +417,24 @@ gross per trade, but SPY gained +0.88% over the same 20 sessions (excess +0.23%,
 - Policy cal_tom_v1 = osr_sect3x_v1's splits, costs and gates; holdout 2020+ (never read for these
   funds), forward holdout from 2026-10-18. Expected outcome stated before the run: likely fails on
   return against SPY, since the money is out of the market about 80% of the time.
+
+## D-033 · 2026-10-17 · Automatic research factory (AUTO-SP500X)
+- After A, B and C failed costs the user asked for strategies to be made and backtested "끊임 없이
+  자동으로", and chose both an always-on factory in the app and new ingredients designed by Claude.
+- Stock catalog 3 (`stock_combo`): 13 more conditions — earnings disappointment over SPY -5/-8%, one
+  officer or director buying $250k+, opening gap down -3/-5%, SPY below its 200-day average, SPY down
+  5% in five days, 52-week low, one-day drop -4/-7%, 20-day drop -15%, 3 and 5 down closes in a row,
+  20-day volatility under 60% of 120-day — in 4 new groups, plus a 3-session hold and 5 slots.
+  Catalogs 1 and 2 keep the same items in the same order. 3,337 entries, 540,594 combinations; the
+  41,850 that AUTO-SP500 already ran are skipped and counted as prior trials.
+- New group AUTO-SP500X, policy auto_sp500x_v1: AUTO-SP500's splits, costs, gates and filters;
+  `order: affine` walks the grid as (a*i + b) mod N instead of storing a 540k-item shuffle;
+  prior_trials 41,853 (AUTO-SP500, INS-CLUSTER, PEAD-SP500, GAP-EARN-SP500), so the t-value needed
+  starts near 5.3. The holdout is shared with AUTO-SP500 and was spent by GAP-EARN-SP500.
+- Verdicts come from forward paper trading only. The factory sends every candidate, and the five
+  strongest rules that failed only the t-value (labelled as such), to 모의 투자 from the day after they
+  were picked; these are refreshed with the scheduled paper refresh.
+- `QuantLab.exe --factory` runs at idle priority from sign-in (and hourly, if closed), with no time
+  limit, until switched off or done. The user asked for continuous running instead of nightly, and
+  for no weekly report: the app shows a report when the whole grid is done, and a notice at once if
+  a full candidate appears. Files in `<work folder>/factory/`.

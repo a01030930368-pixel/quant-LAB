@@ -361,6 +361,11 @@ class Lab:
 
         return Paper(self)
 
+    def factory(self):
+        from quantlab.services.factory import Factory
+
+        return Factory(self)
+
     def holdout_reads(self, strategy_id: str) -> int:
         return sum(1 for r in self.registry.holdout_ledger() if r["strategy_family"] == strategy_id)
 
