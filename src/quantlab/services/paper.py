@@ -106,7 +106,26 @@ class Paper:
                 s = spec["strategy"]
                 out.append({"id": s["id"], "version": str(s["version"]), "name": s.get("name", s["id"]),
                             "path": str(p), "start": str(start)})
-        return sorted(out, key=lambda r: (r["id"] != "GAP-EARN-SP500", r["id"]))
+        out += self._factory_rows()
+        return sorted(out, key=lambda r: (r["id"] != "GAP-EARN-SP500", r.get("watch", False), r["id"]))
+
+    def _factory_rows(self) -> list[dict]:
+        """Rules the research factory sent to paper trading (D-033): its generator spec with fixed
+        parameters, each from the day after it was picked."""
+        from quantlab.services.autosearch import AutoSearch
+        from quantlab.services.factory import GROUP, Factory
+
+        watch = Factory(self.lab).watch()
+        if not watch:
+            return []
+        path = AutoSearch(self.lab).spec_path(GROUP)
+        import yaml
+
+        version = str(yaml.safe_load(Path(path).read_text(encoding="utf-8"))["strategy"]["version"])
+        label = {"candidate": "통과", "near": "t값만 부족"}
+        return [{"id": f"{GROUP}-{w['id']}", "version": version, "path": str(path), "start": w["start"],
+                 "name": f"공장 {w['id']} ({label[w['kind']]}) · {w['rule']}", "params": w["params"], "watch": True}
+                for w in watch]
 
     def folder(self, sid: str, version: str) -> Path:
         return self.lab.ws.path("paper", f"{sid}@{version}")
@@ -142,11 +161,11 @@ class Paper:
         ok = True
         ids = set(self.auto_ids())
         for r in self.candidates():
-            if r["id"] not in ids:
+            if r["id"] not in ids and not r.get("watch"):  # the factory's rules are always refreshed
                 continue
             stamp = datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=9))).strftime("%Y-%m-%d %H:%M")
             try:
-                s = self.refresh(r["path"], today=today)
+                s = self.refresh_row(r, today=today)
                 side = {"buy": "매수", "sell": "매도"}
                 acts = [f"{side[o['side']]} {o['symbol']}" for o in s.get("orders", []) if o["side"] in side]
                 line = f"{stamp} {r['id']} 기준일 {s['asof']} · " + (", ".join(acts) if acts else "주문 없음")
@@ -175,11 +194,19 @@ class Paper:
             path.unlink(missing_ok=True)
 
     # --- one refresh ---------------------------------------------------------------------
-    def refresh(self, spec_path: str | Path, say=None, today: str | None = None) -> dict:
+    def refresh(self, spec_path: str | Path, say=None, today: str | None = None, params: dict | None = None,
+                start: str | None = None, paper_id: str | None = None) -> dict:
         with self._lock():
-            return self._refresh(spec_path, say, today)
+            return self._refresh(spec_path, say, today, params, start, paper_id)
 
-    def _refresh(self, spec_path: str | Path, say=None, today: str | None = None) -> dict:
+    def refresh_row(self, r: dict, say=None, today: str | None = None) -> dict:
+        """One row of `candidates()`: a factory rule carries its own parameters, start and id."""
+        if r.get("watch"):
+            return self.refresh(r["path"], say, today, params=r["params"], start=r["start"], paper_id=r["id"])
+        return self.refresh(r["path"], say, today)
+
+    def _refresh(self, spec_path: str | Path, say=None, today: str | None = None, params: dict | None = None,
+                 start: str | None = None, paper_id: str | None = None) -> dict:
         say = say or (lambda s: None)
         lab = self.lab
         imp = lab.import_strategy(spec_path)
@@ -187,7 +214,8 @@ class Paper:
             raise RuntimeError("전략 검사를 통과하지 못했습니다: " + "; ".join(imp.problems))
         loaded = imp.loaded
         policy_hash, policy = lab.policy_for(loaded)
-        start = pd.Timestamp(policy["splits"]["forward_holdout_start"])
+        start = pd.Timestamp(max(str(start or ""), str(policy["splits"]["forward_holdout_start"])))
+        params = dict(loaded.default_params, **(params or {}))
         today = today or datetime.now(timezone.utc).strftime("%Y%m%d")
         before = self._bundle_dirs()
         version = lab.ensure_spec_dataset(loaded, policy, say, today=today)
@@ -197,10 +225,11 @@ class Paper:
         cal = data.calendar[data.calendar <= asof]
         snap = {"strategy_id": loaded.strategy_id, "version": loaded.version, "strategy_hash": imp.strategy_hash,
                 "policy_hash": policy_hash, "dataset_version": version, "start": _d(start), "asof": _d(asof),
-                "refreshed_at": _now(), "params": loaded.default_params, "qc_fatal": manifest.get("qc_fatal", []),
+                "refreshed_at": _now(), "params": params,
+                "paper_id": paper_id or loaded.strategy_id, "qc_fatal": manifest.get("qc_fatal", []),
                 "qc_warnings": manifest.get("qc_warnings", [])}
         live = cal[cal >= start]
-        folder = self.folder(loaded.strategy_id, loaded.version)
+        folder = self.folder(paper_id or loaded.strategy_id, loaded.version)
         if len(live) == 0:
             first = start
             snap.update(started=False, note=f"{_d(first)} 이후 첫 거래일 장 마감 뒤에 첫 신호가 나와요")
@@ -208,7 +237,7 @@ class Paper:
             return snap
         lo = max(0, int(np.searchsorted(cal, live[0])) - WARMUP_SESSIONS)
         data = data.slice(cal[lo], asof)
-        inner = loaded.factory(**loaded.default_params)
+        inner = loaded.factory(**params)
         strat = FromDate(inner, start)
         cfg = _cfg(policy)
         res = run_backtest(strat, data, cfg)

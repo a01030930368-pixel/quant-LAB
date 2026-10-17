@@ -14,7 +14,7 @@ from typing import Any, Callable
 
 import pandas as pd
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
-from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, QUrl, Signal
+from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (QAbstractItemView, QButtonGroup, QComboBox, QDateEdit, QFileDialog, QFormLayout, QGroupBox,
                                QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QMainWindow, QMessageBox,
@@ -814,6 +814,25 @@ class MainWindow(QMainWindow):
         self.runner.busy_changed.connect(self._busy)
         self.refresh_all()
         self.go("홈")
+        # the research factory runs in its own process: show its news when the app opens, then every 10 minutes
+        self._news_timer = QTimer(self)
+        self._news_timer.timeout.connect(self.factory_news)
+        self._news_timer.start(10 * 60 * 1000)
+        QTimer.singleShot(1500, self.factory_news)
+
+    def factory_news(self) -> None:
+        from quantlab.services.factory import report_text
+
+        try:
+            news = self.lab.factory().unseen()
+        except Exception:  # noqa: BLE001 - a damaged news file must not stop the app
+            return
+        if not news:
+            return
+        self.lab.factory().mark_seen()
+        for n in news:
+            self.notify(report_text(n))
+        self.auto.refresh()
 
     def go(self, name: str) -> None:
         self.stack.setCurrentWidget(self.pages[name])

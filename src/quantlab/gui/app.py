@@ -5,6 +5,8 @@
     QuantLab.exe --paper-refresh
                               refresh the paper-trading rules switched to automatic, without a window
                               (run by Windows Task Scheduler; log in <work folder>/paper/auto.log)
+    QuantLab.exe --factory    the research factory: search AUTO-SP500X at low priority until it is
+                              switched off or done (run by Windows Task Scheduler; <work folder>/factory)
 """
 
 from __future__ import annotations
@@ -53,6 +55,30 @@ def _paper_refresh() -> int:
         lab.close()
 
 
+def _factory() -> int:
+    from PySide6.QtCore import QSettings
+
+    from quantlab.services.factory import FactoryBusy
+    from quantlab.services.lab import Lab
+
+    saved = QSettings("QuantLab", "QuantLab").value("workspace")
+    if not saved or not Path(saved).exists():
+        return 2  # the app has not been set up on this PC
+    lab = Lab(saved)
+    try:
+        if not lab.factory().enabled():
+            return 0
+        lab.factory().run()
+        return 0
+    except FactoryBusy:
+        return 0  # another copy is running
+    except Exception as e:  # noqa: BLE001 - no window: the page shows the last error
+        lab.factory().record_error(e)
+        return 1
+    finally:
+        lab.close()
+
+
 def choose_workspace(settings, parent=None) -> Path | None:
     from PySide6.QtWidgets import QFileDialog, QMessageBox
 
@@ -92,6 +118,8 @@ def main(argv: list[str] | None = None) -> int:
         return _selftest()
     if "--paper-refresh" in argv:
         return _paper_refresh()
+    if "--factory" in argv:
+        return _factory()
     from PySide6.QtCore import QSettings
     from PySide6.QtWidgets import QApplication
 

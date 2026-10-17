@@ -36,7 +36,7 @@ import pandas as pd
 
 from quantlab.strategies.base import MarketView, PartialWeights, Strategy
 
-CATALOGS = (1, 2)  # 2 adds 5 slots (D-029); catalog 1 keeps its meaning
+CATALOGS = (1, 2, 3)  # 2 adds 5 slots (D-029); 3 adds conditions and exits (D-033); older ones keep their meaning
 BENCHMARK = "SPY"
 PARAMS = ("entry", "hold", "stop", "take", "slots")
 KEYS = ("catalog", "park", "park_band")
@@ -44,37 +44,60 @@ ORDER_SEED = 20261016
 EARN_DAYS = 5          # an earnings reaction counts for this many sessions, its own included
 INSIDER_DAYS = 30      # calendar days of insider filings, as INS-CLUSTER
 INSIDER_MIN_VALUE = 10_000
+INSIDER_BIG_VALUE = 250_000  # catalog 3: one officer or director buying at least this much
 
-# key -> (Korean label, group); groups in this order, items in a group from mild to strict
-CONDITIONS: dict[str, tuple[str, str]] = {
-    "earn3": ("실적 발표 반응이 SPY보다 +3% 이상", "earn"),
-    "earn5": ("실적 발표 반응이 SPY보다 +5% 이상", "earn"),
-    "earn8": ("실적 발표 반응이 SPY보다 +8% 이상", "earn"),
-    "ins1": ("임원·이사 1명 이상 매수 (30일)", "ins"),
-    "ins2": ("임원·이사 2명 이상 매수 (30일)", "ins"),
-    "drop5": ("5일 수익률 -5% 이하", "drop"),
-    "drop10": ("5일 수익률 -10% 이하", "drop"),
-    "rsi14_30": ("RSI(14) < 30", "rsi"),
-    "rsi2_10": ("RSI(2) < 10", "rsi"),
-    "gap3": ("시가가 전날 종가보다 +3% 이상", "gap"),
-    "gap5": ("시가가 전날 종가보다 +5% 이상", "gap"),
-    "up200": ("200일선 위", "trend"),
-    "down200": ("200일선 아래", "trend"),
-    "spy_up200": ("SPY가 200일선 위", "spy"),
-    "high252": ("52주 신고가", "high"),
+# key -> (Korean label, group, first catalog); groups in this order, items in a group from mild to strict.
+# A later catalog only adds items, so a catalog's list is the items with `since <= catalog`, in order.
+_CONDITIONS: dict[str, tuple[str, str, int]] = {
+    "earn3": ("실적 발표 반응이 SPY보다 +3% 이상", "earn", 1),
+    "earn5": ("실적 발표 반응이 SPY보다 +5% 이상", "earn", 1),
+    "earn8": ("실적 발표 반응이 SPY보다 +8% 이상", "earn", 1),
+    "earnneg5": ("실적 발표 반응이 SPY보다 -5% 이하", "earn", 3),
+    "earnneg8": ("실적 발표 반응이 SPY보다 -8% 이하", "earn", 3),
+    "ins1": ("임원·이사 1명 이상 매수 (30일)", "ins", 1),
+    "ins2": ("임원·이사 2명 이상 매수 (30일)", "ins", 1),
+    "insbig": ("임원·이사 한 명이 25만 달러 이상 매수 (30일)", "ins", 3),
+    "drop5": ("5일 수익률 -5% 이하", "drop", 1),
+    "drop10": ("5일 수익률 -10% 이하", "drop", 1),
+    "rsi14_30": ("RSI(14) < 30", "rsi", 1),
+    "rsi2_10": ("RSI(2) < 10", "rsi", 1),
+    "gap3": ("시가가 전날 종가보다 +3% 이상", "gap", 1),
+    "gap5": ("시가가 전날 종가보다 +5% 이상", "gap", 1),
+    "gapdn3": ("시가가 전날 종가보다 -3% 이하", "gap", 3),
+    "gapdn5": ("시가가 전날 종가보다 -5% 이하", "gap", 3),
+    "up200": ("200일선 위", "trend", 1),
+    "down200": ("200일선 아래", "trend", 1),
+    "spy_up200": ("SPY가 200일선 위", "spy", 1),
+    "spy_down200": ("SPY가 200일선 아래", "spy", 3),
+    "spy_drop5": ("SPY 5일 수익률 -5% 이하", "spy", 3),
+    "high252": ("52주 신고가", "high", 1),
+    "low252": ("52주 신저가", "high", 3),
+    "drop1_4": ("하루 수익률 -4% 이하", "drop1", 3),
+    "drop1_7": ("하루 수익률 -7% 이하", "drop1", 3),
+    "drop20_15": ("20일 수익률 -15% 이하", "drop20", 3),
+    "dn3": ("3일 연속 하락", "streak", 3),
+    "dn5": ("5일 연속 하락", "streak", 3),
+    "squeeze": ("최근 20일 변동성이 120일 변동성의 60% 미만", "vol", 3),
 }
-GROUPS = ("earn", "ins", "drop", "rsi", "gap", "trend", "spy", "high")
+CONDITIONS: dict[str, tuple[str, str]] = {k: v[:2] for k, v in _CONDITIONS.items()}
+GROUPS = ("earn", "ins", "drop", "rsi", "gap", "trend", "spy", "high", "drop1", "drop20", "streak", "vol")
 # adjacent thresholds of the same measure (neighbours); rsi and trend items are different measures
-LADDERS = (("earn3", "earn5", "earn8"), ("ins1", "ins2"), ("drop5", "drop10"), ("gap3", "gap5"))
-HOLDS = (5, 10, 20, 30, 60)
-STOPS = (0, 0.1, 0.2)
-TAKES = (0, 0.1, 0.2)
-SLOTS = {1: (10, 20), 2: (5, 10, 20)}
+LADDERS = (("earn3", "earn5", "earn8"), ("earnneg5", "earnneg8"), ("ins1", "ins2"), ("drop5", "drop10"),
+           ("gap3", "gap5"), ("gapdn3", "gapdn5"), ("drop1_4", "drop1_7"), ("dn3", "dn5"))
+_HOLDS = {1: (5, 10, 20, 30, 60), 2: (5, 10, 20, 30, 60), 3: (3, 5, 10, 20, 30, 60)}
+_STOPS = {1: (0, 0.1, 0.2), 2: (0, 0.1, 0.2), 3: (0, 0.1, 0.2)}
+_TAKES = {1: (0, 0.1, 0.2), 2: (0, 0.1, 0.2), 3: (0, 0.1, 0.2)}
+HOLDS, STOPS, TAKES = _HOLDS[1], _STOPS[1], _TAKES[1]
+SLOTS = {1: (10, 20), 2: (5, 10, 20), 3: (5, 10, 20)}
+
+
+def conditions(catalog: int = 1) -> list[str]:
+    return [k for k, v in _CONDITIONS.items() if v[2] <= catalog]
 
 
 def entries(catalog: int = 1) -> list[str]:
     """Every entry key: 1 to 3 conditions from different groups, joined with '+' in catalog order."""
-    keys = list(CONDITIONS)
+    keys = conditions(catalog)
     out = []
     for n in (1, 2, 3):
         for combo in itertools.combinations(keys, n):
@@ -84,8 +107,18 @@ def entries(catalog: int = 1) -> list[str]:
 
 
 def full_space(catalog: int = 1) -> dict[str, list]:
-    return {"entry": entries(catalog), "hold": list(HOLDS), "stop": list(STOPS), "take": list(TAKES),
-            "slots": list(SLOTS[catalog])}
+    return {"entry": entries(catalog), "hold": list(_HOLDS[catalog]), "stop": list(_STOPS[catalog]),
+            "take": list(_TAKES[catalog]), "slots": list(SLOTS[catalog])}
+
+
+def already_tried(params: dict, catalog: int) -> bool:
+    """A catalog-3 combination made only of catalog-1 items: AUTO-SP500 ran it (its trials are counted
+    as prior trials), so the newer search skips it instead of running it twice."""
+    if catalog < 3:
+        return False
+    return (all(_CONDITIONS[c][2] == 1 for c in str(params["entry"]).split("+"))
+            and params["hold"] in _HOLDS[1] and params["stop"] in _STOPS[1] and params["take"] in _TAKES[1]
+            and params["slots"] in SLOTS[1])
 
 
 def catalog_of(rules: dict) -> int:
@@ -155,11 +188,12 @@ def neighbours(params: dict, catalog: int = 1) -> list[dict]:
                     if 0 <= k < len(ladder):
                         new = sorted(conds[:i] + [ladder[k]] + conds[i + 1:], key=order.index)
                         out.append(dict(params, entry="+".join(new)))
-    h = HOLDS.index(params["hold"]) if params["hold"] in HOLDS else None
+    holds = _HOLDS.get(catalog, HOLDS)
+    h = holds.index(params["hold"]) if params["hold"] in holds else None
     if h is not None:
         for k in (h - 1, h + 1):
-            if 0 <= k < len(HOLDS):
-                out.append(dict(params, hold=HOLDS[k]))
+            if 0 <= k < len(holds):
+                out.append(dict(params, hold=holds[k]))
     return out
 
 
@@ -213,6 +247,27 @@ def build_panels(data) -> dict:
     p: dict[str, Any] = {}
     p["drop5"], p["drop10"] = ret5 <= -0.05, ret5 <= -0.10
     p["gap3"], p["gap5"] = gap >= 0.03, gap >= 0.05
+    with np.errstate(invalid="ignore", divide="ignore"):
+        ret1 = C / shifted(C, 1) - 1
+        ret20 = C / shifted(C, 20) - 1
+        low252 = cdf.rolling(252, min_periods=252).min().to_numpy()
+        r1 = pd.DataFrame(ret1)
+        vol20 = r1.rolling(20, min_periods=20).std().to_numpy()
+        vol120 = r1.rolling(120, min_periods=120).std().to_numpy()
+        spy5 = spy_s / spy_s.shift(5) - 1
+    p["gapdn3"], p["gapdn5"] = gap <= -0.03, gap <= -0.05
+    p["drop1_4"], p["drop1_7"] = ret1 <= -0.04, ret1 <= -0.07
+    p["drop20_15"] = ret20 <= -0.15
+    p["low252"] = np.isfinite(low252) & (C <= low252)
+    down = np.nan_to_num(ret1, nan=0.0) < 0
+    run = np.zeros((T, N), dtype=np.int32)
+    for t in range(1, T):
+        run[t] = np.where(down[t], run[t - 1] + 1, 0)
+    p["dn3"], p["dn5"] = run >= 3, run >= 5
+    p["squeeze"] = np.isfinite(vol20) & np.isfinite(vol120) & (vol20 < 0.6 * vol120)
+    spy_down = (spy_s / spy_s.rolling(200, min_periods=200).mean() - 1).to_numpy() < 0
+    p["spy_down200"] = np.repeat(spy_down[:, None], N, axis=1)
+    p["spy_drop5"] = np.repeat((spy5.to_numpy() <= -0.05)[:, None], N, axis=1)
     p["up200"], p["down200"] = C > sma200, C < sma200
     p["high252"] = np.isfinite(high252) & (C >= high252)
     p["spy_up200"] = np.repeat(spy_up[:, None], N, axis=1)
@@ -226,6 +281,7 @@ def build_panels(data) -> dict:
 
     # earnings: abnormal return over SPY from the last close before the filing date to the first close after it
     abn = np.full((T, N), -np.inf)
+    neg = np.full((T, N), np.inf)  # the most negative reaction in the window (catalog 3)
     if len(ev) and "kind" in ev:
         e_mask = (ev["kind"] == "earnings").to_numpy()
         for k in np.flatnonzero(e_mask):
@@ -240,9 +296,31 @@ def build_panels(data) -> dict:
             if np.isfinite(r):
                 seg = abn[e:e + EARN_DAYS, j]
                 np.maximum(seg, r, out=seg)
+                seg = neg[e:e + EARN_DAYS, j]
+                np.minimum(seg, r, out=seg)
     p["earn3"], p["earn5"], p["earn8"] = abn >= 0.03, abn >= 0.05, abn >= 0.08
+    p["earnneg5"], p["earnneg8"] = neg <= -0.05, neg <= -0.08
 
     # insiders: distinct officers/directors with a purchase filing of at least $10k in the last 30 days
+    n_ins = _insider_counts(ev, known_all, cal64, col, T, N, INSIDER_MIN_VALUE)
+    p["ins1"], p["ins2"] = n_ins >= 1, n_ins >= 2
+    p["insbig"] = _insider_counts(ev, known_all, cal64, col, T, N, INSIDER_BIG_VALUE) >= 1
+
+    for k in list(p):
+        p[k] = np.ascontiguousarray(p[k], dtype=bool)
+    members = data.members[syms].to_numpy(dtype=bool) if N else np.zeros((T, 0), bool)
+    p["member"] = members & np.isfinite(C)
+    p["close"], p["open"] = C, O
+    p["order"] = np.random.default_rng(ORDER_SEED).random((T, N))
+    for v in p.values():
+        v.setflags(write=False)
+    p["symbols"] = tuple(syms)
+    return p
+
+
+def _insider_counts(ev, known_all, cal64, col, T: int, N: int, min_value: float) -> np.ndarray:
+    """Per session and stock: distinct officers/directors with a purchase filing of at least
+    `min_value` dollars made public in the last INSIDER_DAYS calendar days."""
     count = np.zeros((T + 1, N), dtype=np.int32)
     if len(ev) and "kind" in ev and "owner" in ev:
         role = np.zeros(len(ev), dtype=bool)
@@ -250,7 +328,7 @@ def build_panels(data) -> dict:
             if r in ev:
                 role |= ev[r].fillna(False).astype(bool).to_numpy()
         val = pd.to_numeric(ev["value"], errors="coerce").fillna(0).to_numpy() if "value" in ev else np.zeros(len(ev))
-        i_mask = (ev["kind"] == "insider_buy").to_numpy() & role & (val >= INSIDER_MIN_VALUE)
+        i_mask = (ev["kind"] == "insider_buy").to_numpy() & role & (val >= min_value)
         spans: dict[tuple, list[tuple[int, int]]] = {}
         for k in np.flatnonzero(i_mask):
             j = col.get(ev["symbol"].iat[k])
@@ -270,19 +348,7 @@ def build_panels(data) -> dict:
                     a, b = lo, hi
                 else:
                     b = max(b, hi)
-    n_ins = np.cumsum(count, axis=0)[:T]
-    p["ins1"], p["ins2"] = n_ins >= 1, n_ins >= 2
-
-    for k in list(p):
-        p[k] = np.ascontiguousarray(p[k], dtype=bool)
-    members = data.members[syms].to_numpy(dtype=bool) if N else np.zeros((T, 0), bool)
-    p["member"] = members & np.isfinite(C)
-    p["close"], p["open"] = C, O
-    p["order"] = np.random.default_rng(ORDER_SEED).random((T, N))
-    for v in p.values():
-        v.setflags(write=False)
-    p["symbols"] = tuple(syms)
-    return p
+    return np.cumsum(count, axis=0)[:T]
 
 
 # ----------------------------------------------------------------------------- strategy

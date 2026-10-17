@@ -155,10 +155,12 @@ class PaperPage(Page):
         from quantlab.services import scheduler
 
         self.auto.blockSignals(True)
-        self.auto.setChecked(bool(r) and r["id"] in paper.auto_ids())
+        watch = bool(r) and r.get("watch", False)  # the research factory's rules are always refreshed
+        self.auto.setChecked(bool(r) and (watch or r["id"] in paper.auto_ids()))
         self.auto.blockSignals(False)
-        self.auto.setEnabled(bool(r) and scheduler.supported())
-        self.auto.setToolTip("" if scheduler.supported() else "설치된 Windows 앱에서만 쓸 수 있어요")
+        self.auto.setEnabled(bool(r) and scheduler.supported() and not watch)
+        self.auto.setToolTip("자동 연구 공장이 고른 규칙은 공장이 켜져 있는 동안 늘 자동 갱신돼요" if watch else
+                             "" if scheduler.supported() else "설치된 Windows 앱에서만 쓸 수 있어요")
         last = paper.last_auto()
         self.auto_last.setText(f"마지막 자동 갱신 {last}" if last else "")
         self.render()
@@ -179,7 +181,7 @@ class PaperPage(Page):
             return
         ids = paper.set_auto(r["id"], on)
         try:
-            if ids:
+            if ids or self.lab.factory().enabled():
                 scheduler.install()
             else:
                 scheduler.remove()
@@ -207,7 +209,7 @@ class PaperPage(Page):
 
         self.step.setText("준비 중")
         self.progress.show()
-        if not self.win.runner.start("모의 투자 갱신", lambda p: self.lab.paper().refresh(r["path"], say=p.say), done,
+        if not self.win.runner.start("모의 투자 갱신", lambda p: self.lab.paper().refresh_row(r, say=p.say), done,
                                      on_text=self.step.setText) or self.win.runner.last_error and self.win.runner.sync:
             self.progress.hide()
 

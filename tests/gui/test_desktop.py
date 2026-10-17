@@ -319,3 +319,31 @@ def test_paper_page_switches_the_automatic_refresh(win, monkeypatch):
     assert done == ["install"] and win.lab.paper().auto_ids() == ["GAP-EARN-SP500"]
     win.paper.auto.setChecked(False)
     assert done == ["install", "remove"] and win.lab.paper().auto_ids() == []
+
+
+def test_factory_switch_registers_both_tasks_and_news_shows_once(win, monkeypatch):
+    """D-033: the factory card on 자동 탐색; the app shows the factory's news when it arrives."""
+    from quantlab.services import scheduler
+
+    win.go("자동 탐색")
+    page = win.auto
+    assert not page.factory_on.isEnabled() and "꺼져" in page.factory_line.text()
+    done = []
+    monkeypatch.setattr(scheduler, "supported", lambda: True)
+    monkeypatch.setattr(scheduler, "install", lambda exe=None: done.append("paper"))
+    monkeypatch.setattr(scheduler, "install_factory", lambda exe=None, run_now=True: done.append("factory"))
+    monkeypatch.setattr(scheduler, "remove_factory", lambda: done.append("-factory"))
+    monkeypatch.setattr(scheduler, "remove", lambda: done.append("-paper"))
+    page.refresh()
+    page.factory_on.setChecked(True)
+    assert done == ["paper", "factory"] and win.lab.factory().enabled()
+    assert "켜져 있어요" in page.factory_line.text()
+    page.factory_on.setChecked(False)
+    assert done[2:] == ["-factory", "-paper"] and not win.lab.factory().enabled()
+    page.choose("AUTO-SP500X")
+    assert page.seg_buttons["AUTO-SP500X"].isChecked()
+    f = win.lab.factory()
+    f._news({"kind": "candidate", "id": "W01", "rule": "규칙", "t": 5.5, "cagr": 0.2, "mdd": -0.2, "start": "2026-10-20"})
+    win.factory_news()
+    assert "모든 기준을 통과한 전략" in win.statusBar().currentMessage()
+    assert f.unseen() == []
