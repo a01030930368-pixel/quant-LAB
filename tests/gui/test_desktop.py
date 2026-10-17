@@ -265,3 +265,37 @@ def test_home_asks_for_the_sec_email_before_an_index_strategy(win, monkeypatch):
     win.home.ask_email = lambda: pytest.fail("asked again")
     win.home.run(path)
     assert started == ["백테스트", "백테스트"]
+
+
+def test_paper_page_shows_the_next_orders_and_the_slots(win, monkeypatch):
+    """D-030: the 모의 투자 page draws one refresh: orders at the next open, five slots, the score."""
+    from PySide6.QtWidgets import QLabel
+
+    from quantlab.services import paper as P
+
+    win.go("모의 투자")
+    assert win.paper.current()["id"] == "GAP-EARN-SP500"
+    assert "갱신" in win.paper.todo.findChildren(QLabel)[0].text()
+    snap = {"strategy_id": "GAP-EARN-SP500", "version": "1.0.0", "start": "2026-10-17", "asof": "2026-12-18",
+            "refreshed_at": "20261218T224000Z", "started": True, "params": {"slots": 5, "hold": 30},
+            "hold": 30, "ret": 0.034, "spy_ret": 0.019, "mdd": -0.021, "spy_mdd": -0.016,
+            "orders": [{"side": "buy", "symbol": "AAAA", "weight": 0.2}, {"side": "sell", "symbol": "BBBB", "weight": 0.0},
+                       {"side": "park", "symbol": "SPY", "weight": 0.2}],
+            "holdings": [{"symbol": "BBBB", "park": False, "ret": 0.062, "spy_ret": 0.022, "sessions": 30,
+                          "entry_date": "2026-11-05", "weight": 0.21},
+                         {"symbol": "SPY", "park": True, "weight": 0.2}],
+            "closed": [{"symbol": "FFFF", "entry": "2026-10-21", "exit": "2026-12-03", "gross": 0.05, "net": 0.044,
+                        "bench": 0.019, "excess": 0.031}],
+            "ledger": {"changed": [{"kind": "different"}]}}
+    monkeypatch.setattr(P.Paper, "refresh", lambda self, path, say=None, today=None: snap)
+    win.lab.set_sec_email("someone@example.com")
+    win.paper.refresh_now()
+    assert win.runner.last_error is None, win.runner.last_error
+    texts = [w.text() for w in win.paper.todo.findChildren(QLabel)]
+    assert any("12-21 월요일 시가" in t for t in texts)
+    assert "매수" in texts and "AAAA" in texts and "BBBB" in texts
+    assert win.paper.slots.count() == 5 and win.paper.kpis.count() == 4
+    assert win.paper.warn.isVisibleTo(win.paper)
+    assert win.paper.table.rowCount() == 1 and win.paper.table.item(0, 0).text() == "FFFF"
+    win.paper._show("days")
+    assert win.paper.table.rowCount() == 0          # nothing saved in this work folder

@@ -89,6 +89,13 @@ def read_bundle(meta: dict) -> tuple[pd.DataFrame, pd.DataFrame]:
     return prices, members
 
 
+def current_members(meta: dict) -> list[str]:
+    """Tickers in the bundle's latest membership snapshot."""
+    m = pd.read_parquet(Path(meta["dir"]) / "members.parquet", columns=["date", "ticker"])
+    m["date"] = pd.to_datetime(m["date"])
+    return sorted(m.loc[m["date"] == m["date"].max(), "ticker"])
+
+
 def membership(members: pd.DataFrame, sessions: pd.DatetimeIndex) -> pd.DataFrame:
     """Bool frame (sessions x tickers): each snapshot holds from its date until the next snapshot."""
     snap = members.assign(v=True).pivot_table(index="date", columns="ticker", values="v", aggfunc="any",

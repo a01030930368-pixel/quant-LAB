@@ -365,3 +365,26 @@ gross per trade, but SPY gained +0.88% over the same 20 sessions (excess +0.23%,
   the final evaluation's trial count (validate now reads a policy's `prior_trials`). AUTO-SP500 and
   GAP-EARN-SP500 share one holdout (SHARED_HOLDOUT).
 - Evidence order: the 2010-2019 backtest first; the user decides whether to read the 2020+ holdout.
+
+## D-030 · 2026-10-17 · Paper trading (모의 투자) on the forward holdout
+- GAP-EARN-SP500's 2010-2019 backtest (EXP-20261017-97f9c7d27c): +2.26% per trade over SPY before
+  costs (t 3.0, 233 trades), CAGR 18.3% vs 12.3%, but Sharpe 0.92 vs 0.88 and max drawdown -32% vs
+  -18%, so a 2020+ final evaluation would almost surely fail Gate 3 on the drawdown ratio. The user
+  chose to keep the holdout unread and paper-trade the rule on new data instead, inside the app
+  (no broker account; their Kiwoom paper account runs another app).
+- New page 모의 투자 (design option B, chosen by the user): the orders for the next open first, then
+  the slots, the score against SPY since the start, closed trades and a day-by-day record.
+- `quantlab.services.paper`: each refresh fetches today's data (SPY/BIL as before, the S&P 500
+  bundle again unless fetched that UTC day, and the current members' SEC submissions main files,
+  keeping the stored older pages) and runs the frozen rule with its policy's costs from
+  `forward_holdout_start`. The data starts 300 sessions earlier for the indicators; the strategy is
+  never asked for a decision before the start and nothing about those sessions is computed or shown.
+  The last session used is the last one with prices for 90% of the members.
+- Record in the work folder (`paper/<id>@<version>/`): ledger.json keeps every fill as first computed;
+  a later refresh that computes a different past (revised prices, late filings) is listed on the page,
+  and the first version stays. days/<as-of>.json keeps each refresh.
+- Bundles (about 200 MB) and index datasets created by refreshes are deleted once a newer one exists,
+  unless an experiment used them.
+- The 2020+ holdout of these stocks includes the paper period. Once paper results have been seen, a
+  final evaluation over 2020+ is not blind for those months; the verdict on this rule comes from the
+  forward data.
