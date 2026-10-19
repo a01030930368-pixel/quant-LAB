@@ -226,7 +226,8 @@ def test_catalog_2_extends_catalog_1_without_changing_it():
     assert {"indicator": "close_vs_sma", "op": ">", "value": 0, "days": 200, "of": "SPY"} in rules["entry"]
     with pytest.raises(ValueError):
         combo.build_rules({"catalog": 1, "trade": ["EDC"], "slots": 4}, p)
-    assert combo.validate_combo({"catalog": 2, "trade": ["EDC"], "slots": 4}, ["EDC"])  # SPY missing
+    params = {k: {"default": v[0], "search": v} for k, v in two.items()}
+    assert combo.validate_params(params, 2, ["EDC"])  # the SPY market filters are listed but SPY is missing
 
 
 def test_trial_states_read_incrementally_match_a_fresh_read(lab):
