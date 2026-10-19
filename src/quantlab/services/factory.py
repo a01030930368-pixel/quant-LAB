@@ -28,8 +28,10 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-GROUP = "AUTO-SP500X"
+GROUPS = ("AUTO-SP500X", "AUTO-SP500Y")  # searched in this order, each to the end (D-033, D-034)
+GROUP = GROUPS[0]                       # files written before D-034 belong to this one
 KST = timezone(timedelta(hours=9))
+ROUND = {g: f"{i + 1}차" for i, g in enumerate(GROUPS)}
 NEAR_IN_WATCH = 5        # t-only near misses kept in paper trading at once
 LOCK_STALE_SECONDS = 15 * 60
 WATCH_REV = 2           # 2: the near misses in paper trading are the strongest so far, not the first found
@@ -164,23 +166,43 @@ class Factory:
     def _news(self, item: dict) -> None:
         self._write("news.json", self.news() + [{"at": _kst(), "seen": False, **item}])
 
-    def finished(self) -> bool:
-        """The whole grid of the current spec has been tried (checked without loading any data)."""
+    def _finished_all(self) -> dict:
         done = self._read("finished.json", {})
+        return {GROUP: done} if "strategy_hash" in done else done  # one group's record before D-034
+
+    def group_finished(self, group: str) -> bool:
+        """The whole grid of the group's current spec has been tried (checked without loading any data)."""
+        done = self._finished_all().get(group)
         if not done:
             return False
-        strategy_hash, _ = self.lab.auto_search().loaded(GROUP)
+        strategy_hash, _ = self.lab.auto_search().loaded(group)
         return done.get("strategy_hash") == strategy_hash
+
+    def current(self) -> str | None:
+        """The group being searched: the first whose grid is not done (None: all done)."""
+        return next((g for g in GROUPS if not self.group_finished(g)), None)
+
+    def finished(self) -> bool:
+        return self.current() is None
+
+    def _set_finished(self, group: str, value: dict) -> None:
+        self._write("finished.json", self._finished_all() | {group: value})
+
+    def _refresh_old_watch(self, today=None) -> None:
+        """Grids finished by an older version: pick their final top near misses once."""
+        for g, rec in self._finished_all().items():
+            if rec.get("watch_rev", 1) < WATCH_REV and self.group_finished(g):
+                self._update_watch(self.lab.auto_search().summary(g), today, group=g)
+                self._set_finished(g, rec | {"watch_rev": WATCH_REV})
 
     # --- running ----------------------------------------------------------------------
     def run(self, should_stop=None, max_runs: int | None = None, limit: int | None = None, workers: int = 0,
             today=None) -> str:
         """Search until the grid is done, the switch is off, or `should_stop`. Returns why it ended."""
+        if any(r.get("watch_rev", 1) < WATCH_REV for r in self._finished_all().values()):
+            with self._lock():
+                self._refresh_old_watch(today)
         if self.finished():
-            if self._read("finished.json", {}).get("watch_rev", 1) < WATCH_REV:
-                with self._lock():  # a grid finished by an older version: pick the final top near misses once
-                    self._update_watch(self.lab.auto_search().summary(GROUP), today)
-                    self._write("finished.json", self._read("finished.json", {}) | {"watch_rev": WATCH_REV})
             return "finished"
         with self._lock():
             low_priority()
@@ -200,19 +222,23 @@ class Factory:
             while True:
                 if stop():
                     return "stopped"
-                before = sum(1 for v in auto.trials(GROUP).values() if v["status"] == "done")
+                group = self.current()
+                if group is None:
+                    return "finished"
+                before = sum(1 for v in auto.trials(group).values() if v["status"] == "done")
                 start = _now()
-                out = auto.run(GROUP, workers=workers, should_stop=stop, limit=limit)
-                row = {"start": _kst(start), "end": _kst(), "minutes": round((_now() - start).total_seconds() / 60, 1),
+                out = auto.run(group, workers=workers, should_stop=stop, limit=limit)
+                row = {"group": group, "start": _kst(start), "end": _kst(), "minutes": round((_now() - start).total_seconds() / 60, 1),
                        "tried": out["done"] - before, "done": out["done"], "grid": out["grid"],
                        "candidates": len(out["candidates"]), "t_required": out["t_required"],
                        "best_t": max((r.get("t") or 0 for r in out["near"] if r["fail"] == "tvalue"), default=None)}
                 self._log(row)
-                self._update_watch(out, today)
+                self._update_watch(out, today, group=group)
                 runs += 1
-                if out.get("note"):  # every combination tried
-                    self._finish(out)
-                    return "finished"
+                if out.get("note"):  # every combination of this group tried: report, then the next group
+                    self._finish(out, group)
+                    if self.finished():
+                        return "finished"
                 if out.get("stopped"):
                     return "stopped"
                 if max_runs and runs >= max_runs:
@@ -224,16 +250,17 @@ class Factory:
         d = (today or _now().astimezone(KST).date())
         return str(d + timedelta(days=1))
 
-    def _update_watch(self, out: dict, today=None) -> None:
+    def _update_watch(self, out: dict, today=None, group: str = GROUP) -> None:
         from quantlab.services.autosearch import key
 
         watch = self.watch(all_=True)
-        have = {key(w["params"]) for w in watch}
+        mine = lambda w: w.get("group", GROUP) == group  # noqa: E731
+        have = {key(w["params"]) for w in watch if mine(w)}
         added = []
 
         def add(r: dict, kind: str) -> None:
             n = 1 + max((int(w["id"][1:]) for w in watch), default=0)
-            w = {"id": f"W{n:02d}", "kind": kind, "params": r["params"], "rule": r["rule"],
+            w = {"id": f"W{n:02d}", "group": group, "kind": kind, "params": r["params"], "rule": r["rule"],
                  "t": r.get("t"), "cagr": r.get("cagr"), "sharpe": r.get("sharpe"), "mdd": r.get("mdd"),
                  "n": r.get("n"), "added": _kst(), "start": self._start_date(today)}
             watch.append(w)
@@ -249,14 +276,14 @@ class Factory:
         keep = {key(r["params"]) for r in top}
         dropped = False
         for w in watch:
-            if w["kind"] == "near" and not w.get("dropped") and key(w["params"]) not in keep:
+            if mine(w) and w["kind"] == "near" and not w.get("dropped") and key(w["params"]) not in keep:
                 w["dropped"] = _kst()
                 dropped = True
-        active = {key(w["params"]) for w in watch if not w.get("dropped")}
+        active = {key(w["params"]) for w in watch if mine(w) and not w.get("dropped")}
         for r in top:
             if key(r["params"]) not in active:
                 if key(r["params"]) in have:  # dropped earlier, strong again: back in, from the next day
-                    w = next(w for w in watch if key(w["params"]) == key(r["params"]))
+                    w = next(w for w in watch if mine(w) and key(w["params"]) == key(r["params"]))
                     w.pop("dropped")
                     w.update(t=r.get("t"), start=self._start_date(today), added=_kst())
                     dropped = True
@@ -266,28 +293,32 @@ class Factory:
             self._write("watch.json", watch)
         for w in added:
             if w["kind"] == "candidate":
-                self._news({"kind": "candidate", "id": w["id"], "rule": w["rule"], "t": w["t"], "cagr": w["cagr"],
+                self._news({"kind": "candidate", "group": group, "id": w["id"], "rule": w["rule"], "t": w["t"], "cagr": w["cagr"],
                             "mdd": w["mdd"], "start": w["start"]})
 
-    def _finish(self, out: dict) -> None:
-        strategy_hash, _ = self.lab.auto_search().loaded(GROUP)
-        log = self.log()
-        report = {"kind": "finished", "grid": out["grid"], "done": out["done"], "family_trials": out["family_trials"],
+    def _finish(self, out: dict, group: str = GROUP) -> None:
+        strategy_hash, _ = self.lab.auto_search().loaded(group)
+        log = [x for x in self.log() if x.get("group", GROUP) == group]
+        report = {"kind": "finished", "group": group, "next": next((g for g in GROUPS if not self.group_finished(g)
+                                                                     and g != group), None), "grid": out["grid"], "done": out["done"], "family_trials": out["family_trials"],
                   "t_required": out["t_required"], "candidates": len(out["candidates"]),
                   "funnel": [(f["label"], f["count"]) for f in out["funnel"]],
                   "best_near": [{"rule": r["rule"], "t": r.get("t"), "cagr": r.get("cagr"), "mdd": r.get("mdd")}
                                 for r in sorted((r for r in out["near"] if r["fail"] == "tvalue"),
                                                 key=lambda r: -(r.get("t") or 0))[:5]],
-                  "watch": len(self.watch()), "began": log[0]["start"] if log else None,
+                  "watch": sum(1 for w in self.watch() if w.get("group", GROUP) == group),
+                  "began": log[0]["start"] if log else None,
                   "hours": round(sum(x["minutes"] for x in log) / 60, 1)}
-        self._write("finished.json", {"strategy_hash": strategy_hash, "at": _kst(), "watch_rev": WATCH_REV})
+        self._set_finished(group, {"strategy_hash": strategy_hash, "at": _kst(), "watch_rev": WATCH_REV})
         self._news(report)
 
     # --- the page ----------------------------------------------------------------------
     def progress(self) -> dict:
-        log = self.log()
+        group = self.current()
+        log = [x for x in self.log() if x.get("group", GROUP) == (group or GROUPS[-1])]
         last = log[-1] if log else None
-        return {"enabled": self.enabled(), "running": self.running(), "finished": self.finished(),
+        return {"enabled": self.enabled(), "running": self.running(), "finished": group is None, "group": group,
+                "round": GROUPS.index(group) + 1 if group else len(GROUPS),
                 "done": last["done"] if last else 0, "grid": last["grid"] if last else None,
                 "candidates": last["candidates"] if last else 0, "last": last,
                 "watch": len(self.watch()), "error": self.last_error(), "battery": on_battery()}
@@ -301,7 +332,8 @@ def report_text(n: dict) -> str:
                 f"t값 {n['t']:.2f} · 연수익 {pct(n['cagr'])} · MDD {pct(n['mdd'])} (2010~2019년)\n\n"
                 f"{n['start']}부터 모의 투자 화면에서 공장 {n['id']}로 매일 따라가요. "
                 "2020년 이후 보류 구간은 이미 썼기 때문에, 진짜 판정은 앞으로의 모의 투자 결과예요.")
-    lines = [f"자동 연구 공장이 목록을 모두 시험했어요 ({n['at']}).", "",
+    title = f"자동 연구 공장 {ROUND.get(n.get('group', GROUP), '')}가 목록을 모두 시험했어요"
+    lines = [f"{title} ({n['at']}).", "",
              f"시험한 조합 {n['done']:,}개 (공장 가동 {n['hours']}시간, {n['began']} 시작)",
              f"통과한 전략 {n['candidates']}개 · 필요한 t값 {n['t_required']:.2f}", "", "탈락 이유:"]
     lines += [f"  {lbl} {cnt:,}" for lbl, cnt in n["funnel"] if cnt]
@@ -309,5 +341,6 @@ def report_text(n: dict) -> str:
         lines += ["", "t값만 모자랐던 상위 규칙:"]
         lines += [f"  {r['rule']} · t {r['t']:.2f} · 연수익 {pct(r['cagr'])}" for r in n["best_near"]]
     lines += ["", f"모의 투자로 따라가는 규칙 {n['watch']}개.",
+              f"이어서 {ROUND[n['next']]}를 시작해요." if n.get("next") else
               "공장은 새 재료가 들어올 때까지 쉬어요. 이 보고서를 Claude에게 보여 주면 다음 재료를 설계해요."]
     return "\n".join(lines)

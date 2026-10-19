@@ -36,7 +36,8 @@ import pandas as pd
 
 from quantlab.strategies.base import MarketView, PartialWeights, Strategy
 
-CATALOGS = (1, 2, 3)  # 2 adds 5 slots (D-029); 3 adds conditions and exits (D-033); older ones keep their meaning
+CATALOGS = (1, 2, 3, 4)  # 2 adds 5 slots (D-029); 3 conditions and exits (D-033); 4 index changes, insider sales,
+                        # the weeks before earnings (D-034); older ones keep their meaning
 BENCHMARK = "SPY"
 PARAMS = ("entry", "hold", "stop", "take", "slots")
 KEYS = ("catalog", "park", "park_band")
@@ -45,6 +46,10 @@ EARN_DAYS = 5          # an earnings reaction counts for this many sessions, its
 INSIDER_DAYS = 30      # calendar days of insider filings, as INS-CLUSTER
 INSIDER_MIN_VALUE = 10_000
 INSIDER_BIG_VALUE = 250_000  # catalog 3: one officer or director buying at least this much
+SELL_BIG_VALUE = 100_000     # catalog 4: a sale counts toward "3 insiders selling" from this size
+NOSELL_DAYS = 90             # catalog 4: no officer or director sale (>= INSIDER_MIN_VALUE) in this many days
+INDEX_CHANGE_SESSIONS = 20   # catalog 4: joined or left the index within this many sessions
+PRE_EARN_DAYS = (80, 88)     # catalog 4: calendar days since the last earnings filing (next one ~91 days on)
 
 # key -> (Korean label, group, first catalog); groups in this order, items in a group from mild to strict.
 # A later catalog only adds items, so a catalog's list is the items with `since <= catalog`, in order.
@@ -78,17 +83,23 @@ _CONDITIONS: dict[str, tuple[str, str, int]] = {
     "dn3": ("3일 연속 하락", "streak", 3),
     "dn5": ("5일 연속 하락", "streak", 3),
     "squeeze": ("최근 20일 변동성이 120일 변동성의 60% 미만", "vol", 3),
+    "idxadd": ("최근 20거래일 안에 S&P 500에 새로 편입", "index", 4),
+    "idxdel": ("최근 20거래일 안에 S&P 500에서 빠짐", "index", 4),
+    "inssell3": ("임원·이사 3명 이상이 10만 달러 이상 매도 (30일)", "sell", 4),
+    "nosell": ("임원·이사 매도 없음 (90일)", "sell", 4),
+    "preearn": ("지난 실적 발표 후 80~88일 (다음 발표 1~2주 전)", "pre", 4),
 }
 CONDITIONS: dict[str, tuple[str, str]] = {k: v[:2] for k, v in _CONDITIONS.items()}
-GROUPS = ("earn", "ins", "drop", "rsi", "gap", "trend", "spy", "high", "drop1", "drop20", "streak", "vol")
+GROUPS = ("earn", "ins", "drop", "rsi", "gap", "trend", "spy", "high", "drop1", "drop20", "streak", "vol",
+          "index", "sell", "pre")
 # adjacent thresholds of the same measure (neighbours); rsi and trend items are different measures
 LADDERS = (("earn3", "earn5", "earn8"), ("earnneg5", "earnneg8"), ("ins1", "ins2"), ("drop5", "drop10"),
            ("gap3", "gap5"), ("gapdn3", "gapdn5"), ("drop1_4", "drop1_7"), ("dn3", "dn5"))
-_HOLDS = {1: (5, 10, 20, 30, 60), 2: (5, 10, 20, 30, 60), 3: (3, 5, 10, 20, 30, 60)}
-_STOPS = {1: (0, 0.1, 0.2), 2: (0, 0.1, 0.2), 3: (0, 0.1, 0.2)}
-_TAKES = {1: (0, 0.1, 0.2), 2: (0, 0.1, 0.2), 3: (0, 0.1, 0.2)}
+_HOLDS = {1: (5, 10, 20, 30, 60), 2: (5, 10, 20, 30, 60), 3: (3, 5, 10, 20, 30, 60), 4: (3, 5, 10, 20, 30, 60)}
+_STOPS = {1: (0, 0.1, 0.2), 2: (0, 0.1, 0.2), 3: (0, 0.1, 0.2), 4: (0, 0.1, 0.2)}
+_TAKES = {1: (0, 0.1, 0.2), 2: (0, 0.1, 0.2), 3: (0, 0.1, 0.2), 4: (0, 0.1, 0.2)}
 HOLDS, STOPS, TAKES = _HOLDS[1], _STOPS[1], _TAKES[1]
-SLOTS = {1: (10, 20), 2: (5, 10, 20), 3: (5, 10, 20)}
+SLOTS = {1: (10, 20), 2: (5, 10, 20), 3: (5, 10, 20), 4: (5, 10, 20)}
 
 
 def conditions(catalog: int = 1) -> list[str]:
@@ -112,13 +123,15 @@ def full_space(catalog: int = 1) -> dict[str, list]:
 
 
 def already_tried(params: dict, catalog: int) -> bool:
-    """A catalog-3 combination made only of catalog-1 items: AUTO-SP500 ran it (its trials are counted
-    as prior trials), so the newer search skips it instead of running it twice."""
+    """A combination an earlier search ran (its trials are counted as prior trials), so the newer search
+    skips it instead of running it twice: in catalog 3, one made only of catalog-1 items and exits
+    (AUTO-SP500); in catalog 4, one made only of catalog-3 items and exits (AUTO-SP500 and AUTO-SP500X)."""
     if catalog < 3:
         return False
-    return (all(_CONDITIONS[c][2] == 1 for c in str(params["entry"]).split("+"))
-            and params["hold"] in _HOLDS[1] and params["stop"] in _STOPS[1] and params["take"] in _TAKES[1]
-            and params["slots"] in SLOTS[1])
+    prev = 1 if catalog == 3 else 3
+    return (all(_CONDITIONS[c][2] <= prev for c in str(params["entry"]).split("+"))
+            and params["hold"] in _HOLDS[prev] and params["stop"] in _STOPS[prev] and params["take"] in _TAKES[prev]
+            and params["slots"] in SLOTS[prev])
 
 
 def catalog_of(rules: dict) -> int:
@@ -305,6 +318,28 @@ def build_panels(data) -> dict:
     n_ins = _insider_counts(ev, known_all, cal64, col, T, N, INSIDER_MIN_VALUE)
     p["ins1"], p["ins2"] = n_ins >= 1, n_ins >= 2
     p["insbig"] = _insider_counts(ev, known_all, cal64, col, T, N, INSIDER_BIG_VALUE) >= 1
+    # catalog 4: sales (filings made public by the session), the earnings calendar, index changes
+    p["inssell3"] = _insider_counts(ev, known_all, cal64, col, T, N, SELL_BIG_VALUE, kind="insider_sell") >= 3
+    p["nosell"] = _insider_counts(ev, known_all, cal64, col, T, N, INSIDER_MIN_VALUE, kind="insider_sell",
+                                  days=NOSELL_DAYS) == 0
+    last_earn = np.full((T, N), np.datetime64("NaT", "ns"), dtype="datetime64[ns]")
+    if len(ev) and "kind" in ev:
+        for k in np.flatnonzero((ev["kind"] == "earnings").to_numpy()):
+            j = col.get(ev["symbol"].iat[k])
+            if j is None:
+                continue
+            lo = int(np.searchsorted(cal64, known_all[k], "left"))  # public by the evening of its filing date
+            if lo < T:
+                seg = last_earn[lo:, j]
+                np.copyto(seg, known_all[k], where=np.isnat(seg) | (seg < known_all[k]))
+    age = (cal64[:, None] - last_earn) / np.timedelta64(1, "D")
+    with np.errstate(invalid="ignore"):
+        p["preearn"] = (age >= PRE_EARN_DAYS[0]) & (age <= PRE_EARN_DAYS[1])
+    raw = data.members[syms].to_numpy(dtype=float) if N else np.zeros((T, 0))
+    window = pd.DataFrame(raw).rolling(INDEX_CHANGE_SESSIONS + 1, min_periods=INDEX_CHANGE_SESSIONS + 1)
+    lo_m, hi_m = window.min().to_numpy(), window.max().to_numpy()
+    p["idxadd"] = (raw == 1) & (lo_m == 0)
+    p["idxdel"] = (raw == 0) & (hi_m == 1) & np.isfinite(C)
 
     for k in list(p):
         p[k] = np.ascontiguousarray(p[k], dtype=bool)
@@ -318,9 +353,10 @@ def build_panels(data) -> dict:
     return p
 
 
-def _insider_counts(ev, known_all, cal64, col, T: int, N: int, min_value: float) -> np.ndarray:
-    """Per session and stock: distinct officers/directors with a purchase filing of at least
-    `min_value` dollars made public in the last INSIDER_DAYS calendar days."""
+def _insider_counts(ev, known_all, cal64, col, T: int, N: int, min_value: float, kind: str = "insider_buy",
+                    days: int = INSIDER_DAYS) -> np.ndarray:
+    """Per session and stock: distinct officers/directors with a filing of `kind` (purchase or sale)
+    of at least `min_value` dollars made public in the last `days` calendar days."""
     count = np.zeros((T + 1, N), dtype=np.int32)
     if len(ev) and "kind" in ev and "owner" in ev:
         role = np.zeros(len(ev), dtype=bool)
@@ -328,14 +364,14 @@ def _insider_counts(ev, known_all, cal64, col, T: int, N: int, min_value: float)
             if r in ev:
                 role |= ev[r].fillna(False).astype(bool).to_numpy()
         val = pd.to_numeric(ev["value"], errors="coerce").fillna(0).to_numpy() if "value" in ev else np.zeros(len(ev))
-        i_mask = (ev["kind"] == "insider_buy").to_numpy() & role & (val >= min_value)
+        i_mask = (ev["kind"] == kind).to_numpy() & role & (val >= min_value)
         spans: dict[tuple, list[tuple[int, int]]] = {}
         for k in np.flatnonzero(i_mask):
             j = col.get(ev["symbol"].iat[k])
             if j is None:
                 continue
             lo = int(np.searchsorted(cal64, known_all[k], "left"))
-            hi = int(np.searchsorted(cal64, known_all[k] + np.timedelta64(INSIDER_DAYS - 1, "D"), "right"))
+            hi = int(np.searchsorted(cal64, known_all[k] + np.timedelta64(days - 1, "D"), "right"))
             if lo < hi:
                 spans.setdefault((j, ev["owner"].iat[k]), []).append((lo, hi))
         for (j, _), iv in spans.items():
@@ -406,6 +442,8 @@ class StockComboStrategy(Strategy):
             now = self._all(view, 0)
             before = self._all(view, 1)
             sig = now & view.panel(build_panels, "member")
+            if "idxdel" in self.conds:  # a stock that just left the index is no longer a member
+                sig = now
             if before is not None:
                 sig &= ~before
             idx = np.flatnonzero(sig)

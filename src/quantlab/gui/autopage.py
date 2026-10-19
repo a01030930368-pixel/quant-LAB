@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QButtonGroup, QCheckBox, QFile
 from quantlab.gui import theme
 from quantlab.gui.home import Card, KeepColors, Page, button, cell, hline, kpi_strip, label, pane_header, pct
 from quantlab.services.autosearch import GROUPS
-from quantlab.services.factory import GROUP as FACTORY_GROUP
+from quantlab.services.factory import GROUPS as FACTORY_GROUPS
 
 NEAR_SHOWN = 500  # near misses listed on the page; the CSV has all of them
 
@@ -46,7 +46,7 @@ def _keep_awake(on: bool) -> None:
 
 GROUP_NAME = {"AUTO-DEVA": "선진국 A", "AUTO-DEVB": "선진국 B", "AUTO-EM": "신흥국", "AUTO-REAL": "채권·금·원자재·리츠",
              "AUTO-LEV": "3배 ETF", "AUTO-LEVP": "3배 ETF + 쉬는 돈 SPY", "AUTO-SP500": "S&P 500 종목",
-             "AUTO-SP500X": "S&P 500 종목 · 공장"}
+             "AUTO-SP500X": "S&P 500 종목 · 공장 1차", "AUTO-SP500Y": "S&P 500 종목 · 공장 2차"}
 GROUP_NOTE = {
     "AUTO-DEVA": "일본·독일·영국·캐나다·호주·프랑스·스위스·홍콩·싱가포르 ETF 9종",
     "AUTO-DEVB": "스웨덴·네덜란드·스페인·이탈리아·벨기에·오스트리아 ETF 6종",
@@ -60,20 +60,23 @@ GROUP_NOTE = {
     "AUTO-SP500X": "자동 연구 공장의 묶음. S&P 500 종목 재료 28개(실적 실망·하락 갭·52주 신저가·연속 하락·변동성 수축 등 추가) "
                    "중 1~3개. 앞 묶음이 이미 시험한 조합은 건너뛰고, 통과하면 앞으로의 자료로 모의 투자해요 "
                    "(2020년 이후 보류 구간은 이미 썼어요)",
+    "AUTO-SP500Y": "자동 연구 공장 2차. 1차 재료에 새 정보 5개(S&P 500 편입·편출, 임원 3명 이상 매도, 90일간 매도 없음, "
+                   "다음 실적 발표 1~2주 전)를 더해, 새 재료가 하나 이상 들어간 조합만 시험해요",
 }
 
 
 def factory_text(p: dict) -> str:
-    """One line under the factory switch: progress only (the user gets a report when it is done)."""
+    """One line under the factory switch: progress only (the user gets a report when a round is done)."""
+    rnd = f"{p['round']}차 " if p.get("round", 1) > 1 else ""
     if p["finished"]:
         text = f"목록을 모두 시험했어요 ({p['done']:,}개). 새 재료가 들어올 때까지 쉬어요."
     elif not p["enabled"]:
-        text = "꺼져 있어요." + (f" 지금까지 {p['done']:,}개 시험." if p["done"] else "")
+        text = f"{rnd}꺼져 있어요." + (f" 지금까지 {p['done']:,}개 시험." if p["done"] else "")
     else:
         state = ("돌고 있어요" if p["running"] else
                  "충전기를 뽑아서 쉬는 중이에요 (꽂으면 1분쯤 뒤 이어서 해요)" if p.get("battery") else
                  "켜져 있어요 (PC 로그인 뒤 몇 분 안에, 또는 한 시간 안에 시작)")
-        text = state
+        text = rnd + state
         if p["grid"]:
             text += f" · {p['grid']:,}개 중 {p['done']:,}개 시험 ({p['done'] / p['grid'] * 100:.1f}%)"
     if p["done"]:
@@ -252,7 +255,7 @@ class AutoPage(Page):
         from quantlab.services import scheduler
 
         f = self.lab.factory()
-        if on and self.running and self.group == FACTORY_GROUP:
+        if on and self.running and self.group in FACTORY_GROUPS:
             self.win.notify("이 화면에서 공장 묶음을 탐색하는 중이에요. 멈춘 뒤에 공장을 켜 주세요.")
             self.factory_refresh()
             return
@@ -418,7 +421,7 @@ class AutoPage(Page):
             return
         from quantlab.gui.main_window import _Job, _Signals
 
-        if self.group == FACTORY_GROUP and self.lab.factory().running():
+        if self.group in FACTORY_GROUPS and self.lab.factory().running():
             self.win.notify("자동 연구 공장이 이 묶음을 시험하고 있어요. 공장을 끄면 여기서 직접 돌릴 수 있어요.")
             return
         self.running, self._stop = True, False
