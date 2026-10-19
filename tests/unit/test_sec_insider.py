@@ -31,8 +31,11 @@ def test_parse_quarter_keeps_original_form4_open_market_purchases(tmp_path):
         {"acc": "3", "date": "2012-02-07", "cik": "123", "symbol": "BRK.B",
          "owners": [("7", "TenPercentOwner")], "trans": [("S", "D", 100, 10)]},
     ])
-    pur, fil, counts = sec_insider.parse_quarter(p)
-    assert counts["form4"] == 2 and counts["purchase_filings"] == 1
+    rows, fil, counts = sec_insider.parse_quarter(p)
+    assert counts["form4"] == 2 and counts["purchase_filings"] == 1 and counts["sale_filings"] == 2
+    sales = rows[rows["side"] == "sell"].set_index(["accession", "owner"])
+    assert sales.loc[("1", "9"), "value"] == pytest.approx(120) and sales.loc[("3", "7"), "value"] == pytest.approx(1000)
+    pur = rows[rows["side"] == "buy"]
     assert list(pur["owner"]) == ["8", "9"] or list(pur["owner"]) == ["9", "8"]
     row = pur.set_index("owner")
     assert row.loc["9", "value"] == pytest.approx(100 * 10.5 + 50 * 11)

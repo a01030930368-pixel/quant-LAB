@@ -442,3 +442,23 @@ gross per trade, but SPY gained +0.88% over the same 20 sessions (excess +0.23%,
   the charger. The task is never started on battery and is started again on the power-source event
   (Kernel-Power 105); a running factory stops itself within 30 seconds of being unplugged (the
   switch stays on, unfinished trials run again next time).
+
+## D-034 · 2026-10-19 · Factory round 2 with new information (AUTO-SP500Y)
+- Round 1 (AUTO-SP500X) tried 498,744 combinations in 40.6 hours: none passed (t needed 5.21, best
+  4.53). About 1.08 million rules have now been tried on the same prices and events, so the user
+  chose a second round built on information the factory had not seen yet.
+- Data: the SEC insider parser (PARSE_VERSION 2) also keeps open-market sales by officers and
+  directors (code S, disposition D) as `insider_sell` events; dataset processing version 3. Every
+  older rule filters events by kind, so their results do not change.
+- Stock catalog 4: 5 more conditions — joined the S&P 500 in the last 20 sessions, left it in the
+  last 20 sessions (bought even though it is no longer a member), 3+ officers or directors each
+  selling $100k+ in 30 days, no officer or director sale in 90 days, 80–88 days after the last
+  earnings filing (one to two weeks before the next). Catalogs 1–3 are unchanged. 5,621 entries,
+  910,602 combinations; the 540,594 that rounds 0 and 1 ran are skipped, leaving 370,008.
+- New group AUTO-SP500Y, policy auto_sp500y_v1: auto_sp500x_v1's rules, prior_trials 540,597,
+  forward holdout from 2026-10-21. Holdout shared with AUTO-SP500, GAP-EARN-SP500 and AUTO-SP500X.
+- The factory runs its groups in order and moves to the next when one is done; a report is shown
+  for each round. A round 1 finished by build 54 moves on to round 2 by itself.
+- Watch list fix: the factory keeps the five strongest t-only near misses of each round (the old
+  version kept the first ones it found). Weaker ones leave 모의 투자's list but stay in the file; a
+  round finished by an older build refreshes its list once from the final summary.

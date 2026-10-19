@@ -118,14 +118,17 @@ class Paper:
         watch = Factory(self.lab).watch()
         if not watch:
             return []
-        path = AutoSearch(self.lab).spec_path(GROUP)
         import yaml
 
-        version = str(yaml.safe_load(Path(path).read_text(encoding="utf-8"))["strategy"]["version"])
-        label = {"candidate": "통과", "near": "t값만 부족"}
-        return [{"id": f"{GROUP}-{w['id']}", "version": version, "path": str(path), "start": w["start"],
-                 "name": f"공장 {w['id']} ({label[w['kind']]}) · {w['rule']}", "params": w["params"], "watch": True}
-                for w in watch]
+        auto, label, out = AutoSearch(self.lab), {"candidate": "통과", "near": "t값만 부족"}, []
+        for w in watch:
+            group = w.get("group", GROUP)
+            path = auto.spec_path(group)
+            version = str(yaml.safe_load(Path(path).read_text(encoding="utf-8"))["strategy"]["version"])
+            out.append({"id": f"{group}-{w['id']}", "version": version, "path": str(path), "start": w["start"],
+                        "name": f"공장 {w['id']} ({label[w['kind']]}) · {w['rule']}", "params": w["params"],
+                        "watch": True})
+        return out
 
     def folder(self, sid: str, version: str) -> Path:
         return self.lab.ws.path("paper", f"{sid}@{version}")

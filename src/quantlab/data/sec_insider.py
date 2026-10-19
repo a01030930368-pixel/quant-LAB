@@ -13,9 +13,10 @@ The SEC asks automated clients to name themselves with a contact e-mail in the U
 under 10 requests a second; the app asks the user for that e-mail and sends it only to sec.gov.
 
 What the app keeps (per quarter, cached next to the raw zip):
-    purchases : one row per original Form 4 (amendments are left out) and reporting owner with
-                open-market purchases: known (FILING_DATE), issuer_cik, symbol, owner, value
-                (sum of shares x price over the filing's P/A rows), officer, director, accession
+    purchases : one row per original Form 4 (amendments are left out), reporting owner and side with
+                open-market purchases (side "buy", P/A rows) or sales (side "sell", S/D rows, D-034):
+                known (FILING_DATE), issuer_cik, symbol, owner, value (sum of shares x price over the
+                filing's rows of that side), officer, director, accession, side
     filings   : every original Form 4: issuer_cik, symbol, first and last filing date, count
                 (used to map issuers to the price data's tickers and to report coverage)
 
@@ -34,6 +35,7 @@ import zipfile
 from datetime import date, datetime, timezone
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from quantlab.core.hashing import file_sha256
@@ -41,7 +43,7 @@ from quantlab.core.hashing import file_sha256
 BASES = ("https://www.sec.gov/files/structureddata/data/insider-transactions-data-sets/",
          "https://www.sec.gov/files/datastandardsinnovation/data/insider-transactions-data-sets/")
 FIRST_QUARTER = "2009q3"   # the 30-day window before 2010 needs late-2009 filings
-PARSE_VERSION = 1
+PARSE_VERSION = 2          # 2: open-market sales too (side "sell", D-034)
 PAUSE_SECONDS = 0.3        # well under the SEC's 10 requests per second
 EMAIL = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
 
@@ -172,22 +174,28 @@ def parse_quarter(path: str | Path) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
     counts["form4"] = int(len(sub))
     filings = (sub.groupby(["issuer_cik", "symbol"]).agg(first=("known", "min"), last=("known", "max"),
                                                           n=("known", "size")).reset_index())
-    buy = tr[(tr["TRANS_CODE"].str.strip().str.upper() == "P")
-             & (tr["TRANS_ACQUIRED_DISP_CD"].str.strip().str.upper() == "A")].copy()
-    buy["value"] = (pd.to_numeric(buy["TRANS_SHARES"], errors="coerce")
-                    * pd.to_numeric(buy["TRANS_PRICEPERSHARE"], errors="coerce"))
-    counts["purchase_rows"] = int(len(buy))
-    counts["purchase_rows_without_value"] = int(buy["value"].isna().sum())
-    val = buy.groupby("ACCESSION_NUMBER")["value"].sum(min_count=1).rename("value").reset_index()
+    code = tr["TRANS_CODE"].str.strip().str.upper()
+    ad = tr["TRANS_ACQUIRED_DISP_CD"].str.strip().str.upper()
+    tr = tr.assign(value=pd.to_numeric(tr["TRANS_SHARES"], errors="coerce")
+                   * pd.to_numeric(tr["TRANS_PRICEPERSHARE"], errors="coerce"))
     rel = own["RPTOWNER_RELATIONSHIP"].str.upper()
     own = own.assign(owner=own["RPTOWNERCIK"].str.strip().str.lstrip("0"),
                      officer=rel.str.contains("OFFICER"), director=rel.str.contains("DIRECTOR"))
-    pur = (sub.merge(val, on="ACCESSION_NUMBER").merge(own[["ACCESSION_NUMBER", "owner", "officer", "director"]],
-                                                       on="ACCESSION_NUMBER"))
-    pur = pur.rename(columns={"ACCESSION_NUMBER": "accession"})[
-        ["known", "issuer_cik", "symbol", "owner", "value", "officer", "director", "accession"]]
-    pur = pur.drop_duplicates(["accession", "owner"]).sort_values(["known", "issuer_cik", "owner"], kind="stable")
-    counts["purchase_filings"] = int(pur["accession"].nunique())
+    parts = []
+    for side, mask in (("buy", (code == "P") & (ad == "A")), ("sell", (code == "S") & (ad == "D"))):
+        rows = tr[mask]
+        name = "purchase" if side == "buy" else "sale"
+        counts[f"{name}_rows"] = int(len(rows))
+        counts[f"{name}_rows_without_value"] = int(rows["value"].isna().sum())
+        val = rows.groupby("ACCESSION_NUMBER")["value"].sum(min_count=1).rename("value").reset_index()
+        part = (sub.merge(val, on="ACCESSION_NUMBER")
+                .merge(own[["ACCESSION_NUMBER", "owner", "officer", "director"]], on="ACCESSION_NUMBER"))
+        part = part.rename(columns={"ACCESSION_NUMBER": "accession"})[
+            ["known", "issuer_cik", "symbol", "owner", "value", "officer", "director", "accession"]]
+        part = part.drop_duplicates(["accession", "owner"]).assign(side=side)
+        counts[f"{name}_filings"] = int(part["accession"].nunique())
+        parts.append(part)
+    pur = pd.concat(parts, ignore_index=True).sort_values(["known", "issuer_cik", "owner", "side"], kind="stable")
     return pur.reset_index(drop=True), filings, counts
 
 
@@ -248,5 +256,6 @@ def insider_events(mapped: pd.DataFrame) -> pd.DataFrame:
     ev = mapped.rename(columns={"symbol": "filed_symbol"}).rename(columns={"ticker": "symbol"})[
         ["known", "symbol", "owner", "value", "officer", "director", "filed_symbol", "accession"]].copy()
     ev["value"] = ev["value"].astype(float).fillna(0.0)
-    ev["kind"] = "insider_buy"
+    side = mapped["side"] if "side" in mapped else pd.Series("buy", index=mapped.index)
+    ev["kind"] = np.where(side.to_numpy() == "sell", "insider_sell", "insider_buy")
     return ev.sort_values(["known", "symbol", "owner"], kind="stable").reset_index(drop=True)

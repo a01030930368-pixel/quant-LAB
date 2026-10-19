@@ -171,10 +171,11 @@ def test_factory_watch_list_news_and_switch(tmp_path, monkeypatch):
                         row("squeeze", 9.0) | {"fail": "mdd"}]}
         f._update_watch(out, today=date(2026, 10, 18))
         w = f.watch()
-        assert [(x["id"], x["kind"], x["rule"]) for x in w] == [("W01", "candidate", "earnneg5"), ("W02", "near", "low252")]
+        assert [(x["id"], x["kind"], x["rule"]) for x in w] == [("W01", "candidate", "earnneg5"), ("W02", "near", "low252"),
+                                                               ("W03", "near", "gapdn3")]
         assert all(x["start"] == "2026-10-19" for x in w)
-        f._update_watch(out, today=date(2026, 10, 19))  # the next near miss; nothing is added twice
-        assert [x["id"] for x in f.watch()] == ["W01", "W02", "W03"] and f.watch()[2]["rule"] == "gapdn3"
+        f._update_watch(out, today=date(2026, 10, 19))  # nothing is added twice
+        assert [x["id"] for x in f.watch()] == ["W01", "W02", "W03"] and f.watch()[2]["start"] == "2026-10-19"
         news = f.unseen()
         assert [n["kind"] for n in news] == ["candidate"] and news[0]["id"] == "W01"
         f.mark_seen()
@@ -253,11 +254,13 @@ def test_factory_reports_once_when_the_grid_is_done(tmp_path, monkeypatch):
         monkeypatch.setattr(lab, "auto_search", lambda: FakeAuto())
         monkeypatch.setattr(F, "low_priority", lambda: None)
         assert f.run() == "finished"
-        assert f.finished() and f.run() == "finished" and len(f.log()) == 1  # later starts do nothing
+        # round 1 then round 2, one log row each; later starts do nothing
+        assert f.finished() and f.run() == "finished" and len(f.log()) == 2
         news = f.unseen()
-        assert len(news) == 1 and news[0]["kind"] == "finished"
-        assert "10개" in F.report_text(news[0])
-        assert json.loads(f.path("finished.json").read_text(encoding="utf-8"))["strategy_hash"] == "hash-1"
+        assert [n["kind"] for n in news] == ["finished", "finished"]
+        assert "10개" in F.report_text(news[0]) and "이어서 2차" in F.report_text(news[0])
+        done = json.loads(f.path("finished.json").read_text(encoding="utf-8"))
+        assert all(done[g]["strategy_hash"] == "hash-1" for g in F.GROUPS)
     finally:
         lab.close()
 
@@ -292,5 +295,180 @@ def test_factory_stops_when_the_charger_is_unplugged(tmp_path, monkeypatch):
         assert f.enabled()                              # the switch stays on; it resumes on the charger
         power["battery"] = False
         assert f.run(max_runs=1) in ("stopped", "max_runs") and len(calls) == 2
+    finally:
+        lab.close()
+
+
+def test_watch_keeps_the_strongest_near_misses_and_replaces_weaker_ones(tmp_path, monkeypatch):
+    """Round 1 (2026-10-19): the list filled with the first runs' best; it now keeps the top five so far."""
+    monkeypatch.setattr(F, "NEAR_IN_WATCH", 2)
+    lab = Lab(tmp_path / "QL")
+    try:
+        f = lab.factory()
+        near = lambda e, t: {"params": {"entry": e, "hold": 3, "stop": 0, "take": 0, "slots": 5},  # noqa: E731
+                             "rule": e, "t": t, "fail": "tvalue"}
+        f._update_watch({"candidates": [], "near": [near("dn3", 2.0), near("dn5", 2.5)]}, today=date(2026, 10, 18))
+        assert [w["rule"] for w in f.watch()] == ["dn5", "dn3"]  # strongest first
+        f._update_watch({"candidates": [], "near": [near("dn3", 2.0), near("dn5", 2.5), near("low252", 4.0)]},
+                        today=date(2026, 10, 20))
+        assert [(w["id"], w["rule"]) for w in f.watch()] == [("W01", "dn5"), ("W03", "low252")]
+        assert f.watch()[1]["start"] == "2026-10-21"
+        assert [w["rule"] for w in f.watch(all_=True) if w.get("dropped")] == ["dn3"]
+        assert [r["id"] for r in lab.paper().candidates() if r.get("watch")] == ["AUTO-SP500X-W01", "AUTO-SP500X-W03"]
+    finally:
+        lab.close()
+
+
+def test_a_grid_finished_by_build_54_gets_its_final_top_near_misses_once(tmp_path, monkeypatch):
+    lab = Lab(tmp_path / "QL")
+    try:
+        f = lab.factory()
+        f.set_enabled(True)
+        f._write("finished.json", {"strategy_hash": "h", "at": "x"})  # written before watch_rev existed
+        reads = []
+
+        class FakeAuto:
+            def loaded(self, group):
+                return "h", None
+
+            def summary(self, group):
+                reads.append(1)
+                return {"candidates": [], "near": [{"params": {"entry": "dn3", "hold": 3, "stop": 0, "take": 0, "slots": 5},
+                                                    "rule": "dn3", "t": 4.5, "fail": "tvalue"}]}
+
+            def trials(self, group):
+                return {}
+
+            def run(self, group, workers=0, should_stop=None, limit=None):  # round 2, nothing near
+                return {"done": 1, "grid": 1, "candidates": [], "near": [], "t_required": 5.0,
+                        "family_trials": 1, "funnel": [], "note": "끝"}
+
+        monkeypatch.setattr(lab, "auto_search", lambda: FakeAuto())
+        monkeypatch.setattr(F, "low_priority", lambda: None)
+        assert f.run() == "finished" and [w["rule"] for w in f.watch()] == ["dn3"]
+        assert f.run() == "finished" and reads == [1]  # only once
+    finally:
+        lab.close()
+
+
+# --- round 2: catalog 4 (D-034) ------------------------------------------------------------------
+RULES4 = {"stock_combo": {"catalog": 4, "park": "SPY", "park_band": 2}}
+
+
+def strat4(entry, hold=5, stop=0, take=0, slots=3):
+    return sc.StockComboStrategy(spec_id="T", spec_version_str="1", rules=RULES4,
+                                 entry=entry, hold=hold, stop=stop, take=take, slots=slots)
+
+
+def buys4(data, entry, **kw):
+    t = run_backtest(strat4(entry, **kw), data).trades
+    t = t[(t["symbol"] != "SPY") & (t["qty"] > 0)]
+    return list(zip(t["date"].dt.strftime("%Y-%m-%d"), t["symbol"]))
+
+
+def test_catalog_4_adds_new_information_and_skips_what_rounds_1_and_2_ran():
+    x = load_spec(SPEC)
+    assert sc.entries(3) == list(x.search_space["entry"])  # catalog 3 unchanged, same order
+    assert len(sc.entries(4)) == 5621
+    space = sc.full_space(4)
+    assert np.prod([len(v) for v in space.values()]) == 910602
+    fresh = [p for p in grid(space) if not sc.already_tried(p, 4)]
+    assert len(fresh) == 370008
+    assert all(any(sc._CONDITIONS[c][2] == 4 for c in p["entry"].split("+")) for p in fresh)
+    y = load_spec(builtin_path("specs", "AUTO-SP500Y.qls.yaml"))
+    assert {k: list(v) for k, v in y.search_space.items()} == space
+
+
+def test_index_changes_insider_sales_and_the_weeks_before_earnings():
+    n = 120
+    idx = pd.bdate_range("2020-01-01", periods=n)
+    ev = [("2020-01-06", "X", "earnings", None, None, None, None)]
+    ev += [("2020-02-03", "Y", "insider_sell", o, 200_000, True, False) for o in ("a", "b", "c")]
+    ev += [("2020-02-03", "Z", "insider_sell", "d", 200_000, True, False)]
+    data = market({}, ev, n=n)
+    data.members.loc[: idx[39], "X"] = False      # X joins the index on session 40
+    data.members.loc[idx[60]:, "Z"] = False       # Z leaves on session 60 (its prices go on)
+    d = lambda i: str(idx[i].date())  # noqa: E731
+    assert buys4(data, "idxadd") == [(d(41), "X")]
+    assert buys4(data, "idxdel") == [(d(61), "Z")]
+    assert buys4(data, "inssell3") == [("2020-02-04", "Y")]
+    # no sale in 90 days: X from the start; Y and Z only once their sales are 90 days old
+    # (sale known 2020-02-03 + 90 days = Sunday 2020-05-03: signal on 05-04, bought on 05-05; Z has left)
+    assert buys4(data, "nosell") == [("2020-01-02", "Y"), ("2020-01-02", "Z"), ("2020-05-05", "Y")]
+    # 80 days after the 2020-01-06 filing is 2020-03-26: the signal that day, bought the next open
+    assert buys4(data, "preearn") == [("2020-03-27", "X")]
+
+
+def test_catalog_4_panels_use_only_the_past():
+    rng = np.random.default_rng(6)
+    n = 420
+    closes = {s: 100 * np.exp(np.cumsum(rng.normal(0, 0.03, n))) for s in ("SPY", "X", "Y", "Z")}
+    idx = pd.bdate_range("2020-01-01", periods=n)
+    ev = [(str(idx[i].date()), s, "earnings", None, None, None, None) for i in range(10, n, 63) for s in ("X", "Y")]
+    ev += [(str(idx[i].date()), "Z", "insider_sell", f"o{i % 4}", 150000, True, False) for i in range(5, n, 7)]
+    data = market(closes, ev, n=n)
+    data.members.loc[idx[100]:idx[200], "Y"] = False
+    full = sc.build_panels(data)
+    cut = 300
+    part = sc.build_panels(data.slice(None, idx[cut]))
+    for k, v in full.items():
+        if k != "symbols":
+            assert np.array_equal(v[: cut + 1], part[k], equal_nan=True), k
+    for entry in ("idxadd", "idxdel+drop5", "inssell3+low252", "nosell+preearn", "preearn+gap3"):
+        assert leak_test(lambda **p: strat4(**p), {"entry": entry, "hold": 3, "stop": 0.1, "take": 0.2, "slots": 5},
+                         data, 4, 7) == [], entry
+
+
+def test_factory_runs_round_2_after_round_1_and_reports_each(tmp_path, monkeypatch):
+    lab = Lab(tmp_path / "QL")
+    try:
+        f = lab.factory()
+        f.set_enabled(True)
+        f._write("finished.json", {})
+        ran = []
+
+        class FakeAuto:
+            def loaded(self, group):
+                return f"hash-{group}", None
+
+            def trials(self, group):
+                return {}
+
+            def run(self, group, workers=0, should_stop=None, limit=None):
+                ran.append(group)
+                return {"done": 10, "grid": 10, "candidates": [], "near": [], "t_required": 5.3, "family_trials": 1,
+                        "funnel": [], "note": "done"}
+
+        monkeypatch.setattr(lab, "auto_search", lambda: FakeAuto())
+        monkeypatch.setattr(F, "low_priority", lambda: None)
+        assert f.current() == "AUTO-SP500X"
+        assert f.run() == "finished" and ran == ["AUTO-SP500X", "AUTO-SP500Y"]
+        news = f.unseen()
+        assert [(n["group"], n["next"]) for n in news] == [("AUTO-SP500X", "AUTO-SP500Y"), ("AUTO-SP500Y", None)]
+        assert "1차가" in F.report_text(news[0]) and "2차를 시작" in F.report_text(news[0])
+        assert "새 재료가 들어올 때까지" in F.report_text(news[1])
+        assert [x["group"] for x in f.log()] == ["AUTO-SP500X", "AUTO-SP500Y"]
+        assert f.progress()["finished"]
+    finally:
+        lab.close()
+
+
+def test_round_1_finished_by_build_54_moves_on_to_round_2(tmp_path, monkeypatch):
+    lab = Lab(tmp_path / "QL")
+    try:
+        f = lab.factory()
+        f._write("finished.json", {"strategy_hash": "hash-AUTO-SP500X", "at": "x", "watch_rev": 2})  # old format
+
+        class FakeAuto:
+            def loaded(self, group):
+                return f"hash-{group}", None
+
+        monkeypatch.setattr(lab, "auto_search", lambda: FakeAuto())
+        assert f.group_finished("AUTO-SP500X") and f.current() == "AUTO-SP500Y"
+        p = f.progress()
+        assert p["round"] == 2 and not p["finished"]
+        from quantlab.gui.autopage import factory_text
+
+        assert factory_text(p | {"enabled": True, "running": True, "grid": 370008, "done": 0}).startswith("2차 돌고 있어요")
     finally:
         lab.close()

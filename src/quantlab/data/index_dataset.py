@@ -5,7 +5,7 @@ Layout in data/processed/<version>/:
     manifest.json      kind "index"; inputs (raw hashes), coverage and checks
     stocks.parquet     long table date, ticker, open, high, low, close (total-return prices)
     members.parquet    bool frame, sessions x tickers
-    events.parquet     insider purchase rows (see quantlab.data.sec_insider)
+    events.parquet     insider purchase and sale rows (see quantlab.data.sec_insider), earnings filings
 The SPY/BIL part is the ordinary dataset named in `base_dataset`.
 """
 
@@ -21,7 +21,7 @@ from quantlab.core.hashing import file_sha256, stable_hash
 from quantlab.core.market_data import MarketData
 from quantlab.data import sec_earnings, sec_insider, sp500
 
-PROCESSING_VERSION = 2   # 2: earnings announcement events (D-027)
+PROCESSING_VERSION = 3   # 2: earnings announcement events (D-027); 3: insider sales (D-034)
 MIN_LINKED_SHARE = 0.90      # members with at least one Form 4 linked; below this the mapping is suspect
 MIN_BASKET_CORR = 0.90       # equal-weight member basket vs SPY, daily returns
 MIN_EARNINGS_SHARE = 0.80    # member-years with at least 3 earnings filings
@@ -144,7 +144,8 @@ def build(store, base_version: str, bundle: dict, sec_records: dict[str, dict], 
                 "bundle_source": bundle.get("source"), "bundle_fetched_at": bundle.get("fetched_at"),
                 "stocks": len(frames), "sessions": [str(sessions[0].date()), str(sessions[-1].date())],
                 "coverage": cov, "price_counts": counts, "insider": {
-                    "purchase_rows": int(len(events)), "linked_issuers": int(links["issuer_cik"].nunique()),
+                    "purchase_rows": int((events["kind"] == "insider_buy").sum()),
+                    "sale_rows": int((events["kind"] == "insider_sell").sum()), "linked_issuers": int(links["issuer_cik"].nunique()),
                     "index_stocks_linked": share_linked, "quarters": sorted(sec_records)},
                 "earnings": {"events": int((events["kind"] == "earnings").sum()), "companies": len(earnings_records or {}),
                              "member_years_with_3": earnings_share},
