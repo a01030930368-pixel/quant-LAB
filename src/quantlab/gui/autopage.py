@@ -344,7 +344,7 @@ class AutoPage(Page):
         v[1].setText(f"{s['family_trials']:,}")
         v[2].setText(f"{s['t_required']:.2f}")
         b = s.get("beat_value")
-        v[3].setText("—" if b is None else display_name(s["beat_symbol"]) + " "
+        v[3].setText("—" if b is None else display_name(s.get("beat_symbol", "SPY")) + " "
                      + (f"샤프 {b:.2f}" if s.get("beat_metric") == "sharpe" else f"연 {pct(b)}"))
         v[4].setText(f"{sum(1 for c in s['candidates'] if c['status'] == '후보')}")
         if not self.running:
@@ -386,7 +386,7 @@ class AutoPage(Page):
             self.cand_head.setText(f"{total:,}개" + (f" (위 {NEAR_SHOWN}개 표시)" if total > NEAR_SHOWN else ""))
             self.cand_note.setText(
                 "아직 없습니다." if not total else
-                f"앞의 네 기준(거래 수·거래당 수익·두 구간 이익·비용 2배)은 통과했지만 {display_name(s['beat_symbol'])} 비교나 그 뒤 기준에서 떨어진 조합입니다. "
+                f"앞의 네 기준(거래 수·거래당 수익·두 구간 이익·비용 2배)은 통과했지만 {display_name(s.get('beat_symbol', 'SPY'))} 비교나 그 뒤 기준에서 떨어진 조합입니다. "
                 f"{by}이 높은 순서입니다. 아이디어를 얻는 용도로만 보세요. 수천 개 중에 골라내면 운 좋은 조합을 집기 쉬워서, "
                 "여기서는 최종 평가를 할 수 없습니다. 맨 위 '사전 고정' 조합만 예외입니다 (미리 정해 둔 하나).")
         else:
