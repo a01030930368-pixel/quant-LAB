@@ -134,7 +134,7 @@ def check_schema(spec: Any) -> list[str]:
             from quantlab.strategies.combo import validate_params
 
             combo = rules["combo"] if isinstance(rules["combo"], dict) else {}
-            p += validate_params(params, combo.get("catalog", 1))
+            p += validate_params(params, combo.get("catalog", 1), un["symbols"])
         if "stock_combo" in rules and isinstance(params, dict):
             from quantlab.strategies import stock_combo
 

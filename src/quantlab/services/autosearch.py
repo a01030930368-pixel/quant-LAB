@@ -36,13 +36,14 @@ from quantlab.analysis.trades import episodes, without_best_year
 from quantlab.backtesting.engine import run_backtest
 from quantlab.core.hashing import canonical_json, restore_numbers
 from quantlab.core.market_data import MarketData
+from quantlab.data.providers import display_name
 from quantlab.strategies import combo, stock_combo
 from quantlab.strategies.spec import load_spec
 from quantlab.validation import metrics as M
 from quantlab.validation.engine import BuyAndHold, _cfg, _rf, dev_data
 
 GROUPS = ("AUTO-DEVA", "AUTO-DEVB", "AUTO-EM", "AUTO-REAL", "AUTO-LEV", "AUTO-LEVP", "AUTO-SP500", "AUTO-SP500X",
-          "AUTO-SP500Y")
+          "AUTO-SP500Y", "AUTO-KR2X")
 # groups that trade the same ETFs share one holdout: only one final evaluation across them
 SHARED_HOLDOUT = {"AUTO-LEV": ("AUTO-LEV", "AUTO-LEVP"), "AUTO-LEVP": ("AUTO-LEV", "AUTO-LEVP"),
                   # the pre-fixed rule taken from this search's near misses (D-029) reads the same holdout
@@ -503,6 +504,8 @@ class AutoSearch:
         metric = auto.get("beat_metric", "cagr")
         beat = self.beat_value(group, metric)
         spy_label = SPY_SHARPE_LABEL if metric == "sharpe" else FILTER_LABEL["spy"]
+        if auto["beat_symbol"] != "SPY":  # e.g. KODEX 200 for the KRX group
+            spy_label = spy_label.replace("SPY", display_name(auto["beat_symbol"]))
         funnel = {code: 0 for code, _ in FILTERS}
         rows = []
         near = []  # reached the SPY check (cleared trades, gross, splits and 2x cost) but failed there or later
