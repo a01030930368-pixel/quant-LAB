@@ -32,6 +32,7 @@ GROUP = "AUTO-SP500X"
 KST = timezone(timedelta(hours=9))
 NEAR_IN_WATCH = 5        # t-only near misses kept in paper trading at once
 LOCK_STALE_SECONDS = 15 * 60
+WATCH_REV = 2           # 2: the near misses in paper trading are the strongest so far, not the first found
 CHECK_SECONDS = 30       # how often a running factory re-reads the on/off switch
 
 
@@ -146,8 +147,10 @@ class Factory:
         lines = p.read_text(encoding="utf-8").strip().splitlines() if p.exists() else []
         return lines[-1] if lines else None
 
-    def watch(self) -> list[dict]:
-        return self._read("watch.json", [])
+    def watch(self, all_: bool = False) -> list[dict]:
+        """Rules in paper trading (`all_`: also those replaced by stronger near misses)."""
+        w = self._read("watch.json", [])
+        return w if all_ else [x for x in w if not x.get("dropped")]
 
     def news(self) -> list[dict]:
         return self._read("news.json", [])
@@ -174,6 +177,10 @@ class Factory:
             today=None) -> str:
         """Search until the grid is done, the switch is off, or `should_stop`. Returns why it ended."""
         if self.finished():
+            if self._read("finished.json", {}).get("watch_rev", 1) < WATCH_REV:
+                with self._lock():  # a grid finished by an older version: pick the final top near misses once
+                    self._update_watch(self.lab.auto_search().summary(GROUP), today)
+                    self._write("finished.json", self._read("finished.json", {}) | {"watch_rev": WATCH_REV})
             return "finished"
         with self._lock():
             low_priority()
@@ -220,7 +227,7 @@ class Factory:
     def _update_watch(self, out: dict, today=None) -> None:
         from quantlab.services.autosearch import key
 
-        watch = self.watch()
+        watch = self.watch(all_=True)
         have = {key(w["params"]) for w in watch}
         added = []
 
@@ -236,11 +243,26 @@ class Factory:
         for r in out["candidates"]:
             if r.get("status") == "후보" and key(r["params"]) not in have:
                 add(r, "candidate")
-        near = sorted((r for r in out["near"] if r["fail"] == "tvalue" and key(r["params"]) not in have),
-                      key=lambda r: -(r.get("t") or 0))
-        if near and sum(1 for w in watch if w["kind"] == "near") < NEAR_IN_WATCH:
-            add(near[0], "near")  # at most one per run, the strongest so far; the list fills over the first runs
-        if added:
+        # the NEAR_IN_WATCH strongest rules that failed only the t-value so far; a weaker one is replaced
+        # (it stays in the file, marked dropped, and leaves paper trading)
+        top = sorted((r for r in out["near"] if r["fail"] == "tvalue"), key=lambda r: -(r.get("t") or 0))[:NEAR_IN_WATCH]
+        keep = {key(r["params"]) for r in top}
+        dropped = False
+        for w in watch:
+            if w["kind"] == "near" and not w.get("dropped") and key(w["params"]) not in keep:
+                w["dropped"] = _kst()
+                dropped = True
+        active = {key(w["params"]) for w in watch if not w.get("dropped")}
+        for r in top:
+            if key(r["params"]) not in active:
+                if key(r["params"]) in have:  # dropped earlier, strong again: back in, from the next day
+                    w = next(w for w in watch if key(w["params"]) == key(r["params"]))
+                    w.pop("dropped")
+                    w.update(t=r.get("t"), start=self._start_date(today), added=_kst())
+                    dropped = True
+                else:
+                    add(r, "near")
+        if added or dropped:
             self._write("watch.json", watch)
         for w in added:
             if w["kind"] == "candidate":
@@ -258,7 +280,7 @@ class Factory:
                                                 key=lambda r: -(r.get("t") or 0))[:5]],
                   "watch": len(self.watch()), "began": log[0]["start"] if log else None,
                   "hours": round(sum(x["minutes"] for x in log) / 60, 1)}
-        self._write("finished.json", {"strategy_hash": strategy_hash, "at": _kst()})
+        self._write("finished.json", {"strategy_hash": strategy_hash, "at": _kst(), "watch_rev": WATCH_REV})
         self._news(report)
 
     # --- the page ----------------------------------------------------------------------

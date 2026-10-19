@@ -171,10 +171,11 @@ def test_factory_watch_list_news_and_switch(tmp_path, monkeypatch):
                         row("squeeze", 9.0) | {"fail": "mdd"}]}
         f._update_watch(out, today=date(2026, 10, 18))
         w = f.watch()
-        assert [(x["id"], x["kind"], x["rule"]) for x in w] == [("W01", "candidate", "earnneg5"), ("W02", "near", "low252")]
+        assert [(x["id"], x["kind"], x["rule"]) for x in w] == [("W01", "candidate", "earnneg5"), ("W02", "near", "low252"),
+                                                               ("W03", "near", "gapdn3")]
         assert all(x["start"] == "2026-10-19" for x in w)
-        f._update_watch(out, today=date(2026, 10, 19))  # the next near miss; nothing is added twice
-        assert [x["id"] for x in f.watch()] == ["W01", "W02", "W03"] and f.watch()[2]["rule"] == "gapdn3"
+        f._update_watch(out, today=date(2026, 10, 19))  # nothing is added twice
+        assert [x["id"] for x in f.watch()] == ["W01", "W02", "W03"] and f.watch()[2]["start"] == "2026-10-19"
         news = f.unseen()
         assert [n["kind"] for n in news] == ["candidate"] and news[0]["id"] == "W01"
         f.mark_seen()
@@ -292,5 +293,49 @@ def test_factory_stops_when_the_charger_is_unplugged(tmp_path, monkeypatch):
         assert f.enabled()                              # the switch stays on; it resumes on the charger
         power["battery"] = False
         assert f.run(max_runs=1) in ("stopped", "max_runs") and len(calls) == 2
+    finally:
+        lab.close()
+
+
+def test_watch_keeps_the_strongest_near_misses_and_replaces_weaker_ones(tmp_path, monkeypatch):
+    """Round 1 (2026-10-19): the list filled with the first runs' best; it now keeps the top five so far."""
+    monkeypatch.setattr(F, "NEAR_IN_WATCH", 2)
+    lab = Lab(tmp_path / "QL")
+    try:
+        f = lab.factory()
+        near = lambda e, t: {"params": {"entry": e, "hold": 3, "stop": 0, "take": 0, "slots": 5},  # noqa: E731
+                             "rule": e, "t": t, "fail": "tvalue"}
+        f._update_watch({"candidates": [], "near": [near("dn3", 2.0), near("dn5", 2.5)]}, today=date(2026, 10, 18))
+        assert [w["rule"] for w in f.watch()] == ["dn5", "dn3"]  # strongest first
+        f._update_watch({"candidates": [], "near": [near("dn3", 2.0), near("dn5", 2.5), near("low252", 4.0)]},
+                        today=date(2026, 10, 20))
+        assert [(w["id"], w["rule"]) for w in f.watch()] == [("W01", "dn5"), ("W03", "low252")]
+        assert f.watch()[1]["start"] == "2026-10-21"
+        assert [w["rule"] for w in f.watch(all_=True) if w.get("dropped")] == ["dn3"]
+        assert [r["id"] for r in lab.paper().candidates() if r.get("watch")] == ["AUTO-SP500X-W01", "AUTO-SP500X-W03"]
+    finally:
+        lab.close()
+
+
+def test_a_grid_finished_by_build_54_gets_its_final_top_near_misses_once(tmp_path, monkeypatch):
+    lab = Lab(tmp_path / "QL")
+    try:
+        f = lab.factory()
+        f.set_enabled(True)
+        f._write("finished.json", {"strategy_hash": "h", "at": "x"})  # written before watch_rev existed
+        reads = []
+
+        class FakeAuto:
+            def loaded(self, group):
+                return "h", None
+
+            def summary(self, group):
+                reads.append(1)
+                return {"candidates": [], "near": [{"params": {"entry": "dn3", "hold": 3, "stop": 0, "take": 0, "slots": 5},
+                                                    "rule": "dn3", "t": 4.5, "fail": "tvalue"}]}
+
+        monkeypatch.setattr(lab, "auto_search", lambda: FakeAuto())
+        assert f.run() == "finished" and [w["rule"] for w in f.watch()] == ["dn3"]
+        assert f.run() == "finished" and reads == [1]  # only once
     finally:
         lab.close()
