@@ -1,0 +1,47 @@
+# Cheap and profitable S&P 500 stocks, picked each quarter (D-037). Fixed 2026-10-22 before any
+# financial statement data was downloaded or read, by Claude or the app; two neighbours are fixed with it
+# (policy valq_v1). The stock prices were seen by earlier work; statements were never used.
+spec_version: 1
+strategy:
+  id: VALQ-SP500
+  version: 1.0.0
+  name: 싸고 돈 잘 버는 종목 50개 (S&P 500, 분기마다 교체)
+  type: rotation
+  author: claude
+  parent: null
+  derived_after_holdout_view: false
+hypothesis:
+  class: theory
+  economic_rationale: >
+    Cheap stocks (high book-to-market) and profitable stocks (high gross profit to assets) have both
+    earned more than the market over long periods, and the two work best together because cheap firms
+    tend to be unprofitable and vice versa (Fama & French 1992, Novy-Marx 2013, Asness, Frazzini &
+    Pedersen 2019). Explanations: risk premia for distressed value firms, and investors under-pricing
+    durable profitability. Quarterly turnover keeps costs small.
+  expected_risks:
+    - value lost to growth for most of 2010-2020; the dev span may be the worst decade for this idea
+    - public float is measured once a year and scaled by price; firms with large insider stakes look bigger than they are
+    - banks and insurers have no gross profit line and are left out, so sector weights differ from SPY
+  falsification: >
+    Net Sharpe not above SPY buy-and-hold with block-bootstrap p < 0.10, or max drawdown above 80% of
+    SPY's; or a neighbour (top 30 or top 100) with a Sharpe below SPY's.
+universe:
+  market: US_STOCK
+  index: SP500
+  symbols: [SPY, BIL]
+  frequency: daily
+rules:
+  kind: declarative
+  value:
+    months: [3, 6, 9, 12]
+    park: SPY
+execution:
+  signal_time: close
+  fill: next_open
+  rebalance: daily
+parameters:
+  top_n: {default: 50}
+benchmark: SPY_buy_and_hold
+costs: {one_way_bps: 30}   # informational; the validation policy's costs are binding
+validation:
+  policy: valq_v1

@@ -293,13 +293,13 @@ class Lab:
         return "index" in (spec.get("universe") or {}) and self.sec_email() is None
 
     def ensure_index_dataset(self, base_version: str, start: str, say=None, refresh: bool = False,
-                             today: str | None = None) -> str:
+                             today: str | None = None, facts: bool = False) -> str:
         """S&P 500 dataset on top of the SPY/BIL dataset `base_version`: downloads the price bundle
         (once, or again with `refresh`) and the SEC quarters not yet stored, then builds or reuses.
         `today` (YYYYMMDD, UTC; paper trading) also fetches the bundle again when it lacks the latest
         SPY session (at most every few hours), and the current members' earnings filings unless
         fetched that day."""
-        from quantlab.data import index_dataset, sec_earnings, sec_insider, sp500
+        from quantlab.data import index_dataset, sec_earnings, sec_facts, sec_insider, sp500
 
         say = say or (lambda s: None)
         found = sp500.bundles(self.ws.root)
@@ -323,8 +323,15 @@ class Lab:
             sec_earnings.download(self.ws.root, email, sorted(set(links.loc[links["ticker"].isin(now), "issuer_cik"])),
                                   say=say, refresh_before=today)
         earnings = {c: m for c, m in sec_earnings.records(self.ws.root).items() if c in set(ciks)}
+        stmts = None
+        if facts:  # financial statements, only for rules that read them (D-037)
+            sec_facts.download(self.ws.root, email, ciks, say=say)
+            if today:
+                sec_facts.download(self.ws.root, email, sorted(set(links.loc[links["ticker"].isin(now), "issuer_cik"])),
+                                   say=say, refresh_before=today)
+            stmts = {c: m for c, m in sec_facts.records(self.ws.root).items() if c in set(ciks)}
         version, manifest = index_dataset.build(self.data, base_version, found[-1], sec_records, start, say,
-                                                earnings_records=earnings)
+                                                earnings_records=earnings, facts_records=stmts)
         if manifest["qc_fatal"]:
             say("품질 검사 치명 항목이 있습니다. 결과는 INVALID로 처리됩니다.")
         return version
@@ -333,7 +340,7 @@ class Lab:
         symbols, start = loaded.spec["universe"]["symbols"], policy["splits"]["train"][0]
         base = self.ensure_dataset(symbols, start, say)
         if "index" in loaded.spec["universe"]:
-            return self.ensure_index_dataset(base, start, say, today=today)
+            return self.ensure_index_dataset(base, start, say, today=today, facts="value" in loaded.spec["rules"])
         return base
 
     def quick_backtest(self, spec_path: str | Path, say=None) -> BacktestSummary:

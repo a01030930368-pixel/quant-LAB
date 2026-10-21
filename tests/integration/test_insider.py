@@ -5,13 +5,14 @@ import pandas as pd
 import pytest
 
 from quantlab.core.market_data import MarketData
-from quantlab.data import sec_earnings, sec_insider
+from quantlab.data import sec_earnings, sec_facts, sec_insider
 from quantlab.data.quality import exchange_sessions
 from quantlab.services.lab import Lab, builtin_path
 from quantlab.strategies.insider import InsiderClusterStrategy
 from quantlab.strategies.spec import load_spec
 from quantlab.backtesting.engine import run_backtest
-from insider_fixtures import bundle_frames, store_bundle, store_sec, store_submissions, write_quarter_zip
+from insider_fixtures import (bundle_frames, facts_doc, store_bundle, store_facts, store_sec, store_submissions,
+                              write_quarter_zip)
 from synthetic import frame
 
 SPEC = builtin_path("specs", "INS-CLUSTER.qls.yaml")
@@ -102,12 +103,17 @@ def lab(tmp_path_factory):
     store_bundle(lab.ws.root, prices, members)
     store_sec(lab.ws.root, make_filings(sessions))
     store_submissions(lab.ws.root, companies)
+    store_facts(lab.ws.root, {cik: facts_doc(cik, range(2008, 2021), assets=lambda y, k=k: 1000.0 + 10 * k,
+                                             equity=lambda y, k=k: 100.0 + 40 * k, gross=lambda y, k=k: 500.0 - 30 * k,
+                                             float_=lambda y, k=k: 2000.0 + 100 * (y % 3) + k)
+                              for k, cik in enumerate(sorted(CIK.values()))})
     lab.set_sec_email("someone@example.com")
-    saved = sec_insider.download, sec_earnings.download
+    saved = sec_insider.download, sec_earnings.download, sec_facts.download
     sec_insider.download = lambda *a, **k: {"fetched": [], "missing": []}  # no network in tests
     sec_earnings.download = lambda *a, **k: {"fetched": [], "missing": []}
+    sec_facts.download = lambda *a, **k: {"fetched": [], "missing": []}
     yield lab
-    sec_insider.download, sec_earnings.download = saved
+    sec_insider.download, sec_earnings.download, sec_facts.download = saved
     lab.close()
 
 
@@ -405,3 +411,27 @@ def test_gap_earn_rule_holds_five_stocks_and_counts_the_search_trials(lab, built
     if any(g.gate == "GATE3" for g in out.gates):
         assert out.metrics["holdout"]["dsr_trials"] >= 41853
         assert lab.auto_search().holdout_reads("AUTO-SP500") == 1
+
+
+VALQ = builtin_path("specs", "VALQ-SP500.qls.yaml")
+
+
+def test_value_rule_builds_its_own_dataset_with_statements(lab, built):
+    loaded = load_spec(VALQ)
+    _, policy = lab.policy_for(loaded)
+    version = lab.ensure_spec_dataset(loaded, policy)
+    data, manifest = lab.load_dataset(version)
+    assert version != built[0] and built[2]["facts"] is None            # other rules keep their dataset
+    assert "fact_assets" not in set(built[1].events["kind"])
+    f = data.events[data.events["kind"].astype(str).str.startswith("fact_")]
+    assert len(f) and manifest["facts"]["rows"] == len(f) and manifest["facts"]["members_with_assets_and_float"] > 0.8
+    assert (f["known"] > f["period_end"]).all()
+    # the dataset with statements has the same prices and other events as the one without
+    other = data.events[~data.events["kind"].astype(str).str.startswith("fact_")]
+    assert len(other) == len(built[1].events)
+    bt = lab.quick_backtest(VALQ)                       # 50 picks: more than this test index has, so SPY only
+    assert set(bt.result.trades["symbol"]) == {"SPY"}
+    t = run_backtest(loaded.factory(top_n=5), data).trades
+    picked = t[(t["symbol"] != "SPY") & (t["qty"] > 0)]
+    # the first float dated after the data starts (2010-06-30) is filed with the 10-K of 2011-02-20
+    assert len(set(picked["symbol"])) >= 5 and picked["date"].min() == pd.Timestamp("2011-02-23")

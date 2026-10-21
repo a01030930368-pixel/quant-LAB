@@ -5,7 +5,8 @@ Layout in data/processed/<version>/:
     manifest.json      kind "index"; inputs (raw hashes), coverage and checks
     stocks.parquet     long table date, ticker, open, high, low, close (total-return prices)
     members.parquet    bool frame, sessions x tickers
-    events.parquet     insider purchase and sale rows (see quantlab.data.sec_insider), earnings filings
+    events.parquet     insider purchase and sale rows (see quantlab.data.sec_insider), earnings filings,
+                       and financial statement facts when asked for (quantlab.data.sec_facts, D-037)
 The SPY/BIL part is the ordinary dataset named in `base_dataset`.
 """
 
@@ -19,12 +20,13 @@ import pandas as pd
 
 from quantlab.core.hashing import file_sha256, stable_hash
 from quantlab.core.market_data import MarketData
-from quantlab.data import sec_earnings, sec_insider, sp500
+from quantlab.data import sec_earnings, sec_facts, sec_insider, sp500
 
 PROCESSING_VERSION = 3   # 2: earnings announcement events (D-027); 3: insider sales (D-034)
 MIN_LINKED_SHARE = 0.90      # members with at least one Form 4 linked; below this the mapping is suspect
 MIN_BASKET_CORR = 0.90       # equal-weight member basket vs SPY, daily returns
 MIN_EARNINGS_SHARE = 0.80    # member-years with at least 3 earnings filings
+MIN_FACTS_SHARE = 0.80       # members on a pick date with known assets and public float (facts datasets)
 
 
 def _insider_tables(sec_records: dict[str, dict]) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
@@ -55,12 +57,15 @@ def issuer_links(bundle: dict, sec_records: dict[str, dict]) -> pd.DataFrame:
 
 
 def build(store, base_version: str, bundle: dict, sec_records: dict[str, dict], start: str,
-          say=None, earnings_records: dict[str, dict] | None = None) -> tuple[str, dict]:
+          say=None, earnings_records: dict[str, dict] | None = None,
+          facts_records: dict[str, dict] | None = None) -> tuple[str, dict]:
     say = say or (lambda s: None)
     inputs = {"processing": PROCESSING_VERSION, "kind": "index", "index": "SP500", "start": str(start),
               "base_dataset": base_version, "bundle": {k: v["sha256"] for k, v in bundle["files"].items()},
               "sec": {q: m["sha256"] for q, m in sorted(sec_records.items())},
               "earnings": {c: m["sha256"] for c, m in sorted((earnings_records or {}).items())}}
+    if facts_records is not None:  # only datasets for rules that read statements carry them
+        inputs["facts"] = {c: m["sha256"] for c, m in sorted(facts_records.items())}
     version = stable_hash(inputs)
     done = store.proc_dir / version[:16] / "manifest.json"
     if done.exists():  # same inputs, same dataset
@@ -85,11 +90,18 @@ def build(store, base_version: str, bundle: dict, sec_records: dict[str, dict], 
         say("SEC 실적 발표 공시 정리 중")
         parsed = [sec_earnings.load_parsed(m) for _, m in sorted(earnings_records.items())]
         earn = sec_earnings.earnings_events(pd.concat(parsed, ignore_index=True), links)
-    events = pd.concat([events, earn], ignore_index=True).sort_values(["known", "symbol"], kind="stable")
+    facts = pd.DataFrame(columns=["known", "symbol", "kind", "value", "period_end"])
+    if facts_records:
+        say("SEC 재무제표 자료 정리 중")
+        parsed = [sec_facts.load_parsed(m) for _, m in sorted(facts_records.items())]
+        facts = sec_facts.fact_events(pd.concat(parsed, ignore_index=True), links)
+    events = pd.concat([events, earn] + ([facts] if facts_records else []), ignore_index=True)
+    events = events.sort_values(["known", "symbol"], kind="stable")
     for c in ("officer", "director"):
         events[c] = events[c].astype("boolean").fillna(False).astype(bool)
     events = events[events["symbol"].isin(set(members.columns))
-                    & (events["known"] >= sessions[0] - pd.Timedelta(days=60))
+                    & (events["known"] >= sessions[0] - pd.Timedelta(days=60)
+                       - pd.Timedelta(days=400) * events["kind"].astype(str).str.startswith("fact_"))
                     & (events["known"] <= sessions[-1])].reset_index(drop=True)
 
     say("품질 검사 중")
@@ -126,6 +138,12 @@ def build(store, base_version: str, bundle: dict, sec_records: dict[str, dict], 
         if earnings_share < MIN_EARNINGS_SHARE:
             warnings.append(f"SEC: only {earnings_share:.1%} of member-years have 3+ earnings filings "
                             f"(expected at least {MIN_EARNINGS_SHARE:.0%})")
+    facts_share = None
+    if facts_records is not None:
+        facts_share = _facts_share(events, members)
+        if facts_share < MIN_FACTS_SHARE:
+            warnings.append(f"SEC: only {facts_share:.1%} of members have known assets and public float on "
+                            f"quarter ends (expected at least {MIN_FACTS_SHARE:.0%})")
     corr = _basket_corr(frames, members, base, store_benchmark="SPY")
     if corr is not None and corr < MIN_BASKET_CORR:
         warnings.append(f"S&P 500 member basket vs SPY daily correlation {corr:.3f} (min {MIN_BASKET_CORR})")
@@ -149,12 +167,33 @@ def build(store, base_version: str, bundle: dict, sec_records: dict[str, dict], 
                     "index_stocks_linked": share_linked, "quarters": sorted(sec_records)},
                 "earnings": {"events": int((events["kind"] == "earnings").sum()), "companies": len(earnings_records or {}),
                              "member_years_with_3": earnings_share},
+                "facts": None if facts_records is None else {
+                    "rows": int(events["kind"].astype(str).str.startswith("fact_").sum()),
+                    "companies": len(facts_records), "members_with_assets_and_float": facts_share},
                 "basket_corr_spy": corr, "qc_fatal": fatal, "qc_warnings": warnings}
     (out / "manifest.json").write_text(json.dumps(manifest, indent=1, ensure_ascii=False, default=str),
                                        encoding="utf-8")
     if store.registry is not None:
         store.registry.register_dataset(version, json.loads(json.dumps(manifest, default=str)))
     return version, manifest
+
+
+def _facts_share(events: pd.DataFrame, members: pd.DataFrame) -> float:
+    """Share of member-quarter-ends (after the first year) whose stock has a known assets and public
+    float fact filed within the previous 15 months."""
+    ends = members.index[:-1][members.index[1:].month != members.index[:-1].month]
+    ends = [d for d in ends if d.month in (3, 6, 9, 12) and d >= members.index[0] + pd.Timedelta(days=365)]
+    if not ends:
+        return 1.0
+    ok, total = 0, 0
+    f = events[events["kind"].isin(["fact_assets", "fact_float"])]
+    for d in ends:
+        recent = f[(f["known"] <= d) & (f["known"] > d - pd.Timedelta(days=456))]
+        both = recent.groupby("symbol")["kind"].nunique()
+        mem = members.columns[members.loc[d].to_numpy()]
+        total += len(mem)
+        ok += int((both.reindex(mem) == 2).sum())
+    return ok / total if total else 1.0
 
 
 def _basket_corr(frames: dict, members: pd.DataFrame, base: MarketData, store_benchmark: str) -> float | None:
