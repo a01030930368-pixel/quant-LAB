@@ -91,6 +91,8 @@ NAVER_URL = "https://fchart.stock.naver.com/sise.nhn"
 KRX_NAMES = {"069500": "KODEX 200", "122630": "KODEX 레버리지", "233740": "KODEX 코스닥150레버리지",
              "252670": "KODEX 200선물인버스2X"}
 NAVER_MAX_DAILY_MOVE = 0.35
+# 2x funds move twice their index, whose own daily limit is ±30% (KOSPI rose +17.9% on 2026-07-31).
+NAVER_LEVERAGE = {"122630": 2, "233740": 2, "252670": 2}
 NAVER_SPLIT_RATIOS = tuple(r for k in (2, 2.5, 4, 5, 10, 20, 25, 50, 100) for r in (k, 1 / k))
 NAVER_SPLIT_TOLERANCE = 0.10
 _NAVER_ITEM = re.compile(r'<item\s+data="([^"]*)"')
@@ -137,21 +139,25 @@ def parse_naver(text: str) -> pd.DataFrame:
 def naver_splits(frame: pd.DataFrame, symbol: str = "") -> pd.DataFrame:
     """Record unadjusted splits as split factors (shares after / shares before).
 
-    KRX limits a day to ±30%, so a close-to-close step beyond NAVER_MAX_DAILY_MOVE is a split, never a
-    real move. Its factor is the KRX-style ratio (2, 2.5, 4, 5, 10, 20, 25, 50, 100 or the reverse) nearest
-    to previous close / open, which must be within NAVER_SPLIT_TOLERANCE of it; the day's return after
-    the factor must be an ordinary move again. Anything else stops the download."""
+    A close-to-close step beyond NAVER_MAX_DAILY_MOVE is checked for a split: its factor is the KRX-style
+    ratio (2, 2.5, 4, 5, 10, 20, 25, 50, 100 or the reverse) nearest to previous close / open, which must
+    be within NAVER_SPLIT_TOLERANCE of it, and the day's return after the factor must be an ordinary move
+    again. A step that is no split is kept as a real move when a fund's leverage allows it (2x funds up
+    to twice NAVER_MAX_DAILY_MOVE); anything else stops the download."""
     out = frame.copy()
     close = out["close"].to_numpy()
+    limit = NAVER_MAX_DAILY_MOVE * NAVER_LEVERAGE.get(symbol, 1)
     for i in np.flatnonzero(np.abs(close[1:] / close[:-1] - 1) > NAVER_MAX_DAILY_MOVE) + 1:
         day = out.index[i].date()
+        move = close[i] / close[i - 1] - 1
         q = close[i - 1] / out["open"].iloc[i]
         k = min(NAVER_SPLIT_RATIOS, key=lambda r: abs(np.log(q / r)))
-        if abs(np.log(q / k)) > np.log(1 + NAVER_SPLIT_TOLERANCE) or \
-                abs(close[i] * k / close[i - 1] - 1) > NAVER_MAX_DAILY_MOVE:
-            raise ProviderError(f"Naver {symbol}: close moved {close[i] / close[i - 1] - 1:+.0%} on {day}, "
-                                f"which is no recognisable split (previous close / open = {q:.3f})")
-        out.iloc[i, out.columns.get_loc("split")] = k
+        if abs(np.log(q / k)) <= np.log(1 + NAVER_SPLIT_TOLERANCE) and \
+                abs(close[i] * k / close[i - 1] - 1) <= NAVER_MAX_DAILY_MOVE:
+            out.iloc[i, out.columns.get_loc("split")] = k
+        elif abs(move) > limit:
+            raise ProviderError(f"Naver {symbol}: close moved {move:+.0%} on {day}, which is no recognisable "
+                                f"split (previous close / open = {q:.3f})")
     return out
 
 
