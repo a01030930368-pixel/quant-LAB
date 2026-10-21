@@ -503,3 +503,20 @@ gross per trade, but SPY gained +0.88% over the same 20 sessions (excess +0.23%,
 - Both families are new, so they have their own 2020+ holdout. The S&P 500 prices after 2020 were
   already used by GAP-EARN-SP500's final evaluation (a different rule); whether to open the holdout for
   these is the user's decision. Forward paper data counts from 2026-10-23.
+
+## D-037 · 2026-10-22 · Value plus profitability from SEC statements: VALQ-SP500
+- Third long-hold rule of the plan (D-036). New data source `sec_facts`: each index company's XBRL
+  "company facts" file from the SEC (free, no key), stored gzip-compressed with an atomic meta swap like
+  the earnings files. Kept: total assets, stockholders' equity, last fiscal year's gross
+  profit (or revenue minus cost of revenue from the same filing) and public float. Each value is known
+  from the day after its filing; an amended filing counts only from its own date.
+- Market value without share counts: public float on its date times the stock's adjusted price change
+  since then. Values whose period ended over 500 days before the pick are not used.
+- Datasets: a spec with a `value` block gets its own index dataset with `fact_*` events (dataset input
+  "facts"); other datasets keep their versions. The build warns when fewer than 80% of member
+  quarter-ends have assets and float.
+- VALQ-SP500 1.0.0 (`value` rules, Novy-Marx 2013): at the last close of each quarter, members are
+  scored by percentile of book-to-market plus percentile of gross profit to assets; the best 50 are held
+  at equal weight. SPY is held until the first pick (about February 2011, when the first floats after
+  the data start are known). Banks and insurers without a gross profit line are not ranked. Policy
+  valq_v1 = lowvol_v1 with neighbours top 30 and top 100; its own 2020+ holdout, as in D-036.

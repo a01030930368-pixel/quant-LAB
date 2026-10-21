@@ -114,3 +114,53 @@ def store_submissions(root: Path, companies: dict[str, list[tuple]], page_size: 
         meta = {"cik": cik, "sha256": file_sha256(path), "pages": len(pages), "path": str(path),
                 "fetched_at": "20261016T000000000000Z"}
         (d / f"CIK{int(cik):010d}.meta.json").write_text(json.dumps(meta), encoding="utf-8")
+
+
+def facts_doc(cik: str, years, assets, equity, gross=None, revenue_cost=None, float_=None, filed_day="02-20",
+              amend: dict | None = None) -> dict:
+    """A companyfacts JSON in the SEC's layout: one 10-K per fiscal year (calendar years), filed on
+    `filed_day` of the next year, plus a 10-Q with a quarter's gross profit (not annual: ignored).
+    Values are callables of the year. `amend`: {year: (filed date, assets)} restates assets later."""
+    def fact(rows):
+        return {"units": {"USD": rows}}
+
+    a, e, g, r, c, fl = [], [], [], [], [], []
+    for y in years:
+        filed = f"{y + 1}-{filed_day}"
+        base = {"filed": filed, "form": "10-K", "fy": y, "fp": "FY", "accn": f"{cik}-{y}"}
+        a.append(base | {"end": f"{y}-12-31", "val": assets(y)})
+        e.append(base | {"end": f"{y}-12-31", "val": equity(y)})
+        if gross:
+            g.append(base | {"start": f"{y}-01-01", "end": f"{y}-12-31", "val": gross(y)})
+            g.append(base | {"start": f"{y}-10-01", "end": f"{y}-12-31", "val": gross(y) / 4, "form": "10-K"})
+        if revenue_cost:
+            rv, cs = revenue_cost(y)
+            r.append(base | {"start": f"{y}-01-01", "end": f"{y}-12-31", "val": rv})
+            c.append(base | {"start": f"{y}-01-01", "end": f"{y}-12-31", "val": cs})
+        if float_:
+            fl.append(base | {"end": f"{y}-06-30", "val": float_(y)})
+    for y, (filed, val) in (amend or {}).items():
+        a.append({"filed": filed, "form": "10-K/A", "fy": y, "fp": "FY", "accn": f"{cik}-{y}-A",
+                  "end": f"{y}-12-31", "val": val})
+    gaap = {"Assets": fact(a), "StockholdersEquity": fact(e)}
+    if g:
+        gaap["GrossProfit"] = fact(g)
+    if r:
+        gaap["Revenues"], gaap["CostOfRevenue"] = fact(r), fact(c)
+    return {"cik": int(cik), "facts": {"us-gaap": gaap, "dei": {"EntityPublicFloat": fact(fl)} if fl else {}}}
+
+
+def store_facts(root: Path, docs: dict[str, dict]) -> None:
+    import gzip
+
+    from quantlab.data import sec_facts
+
+    d = sec_facts.store_dir(root)
+    d.mkdir(parents=True, exist_ok=True)
+    for cik, doc in docs.items():
+        path = d / f"CIK{int(cik):010d}.json.gz"
+        with gzip.open(path, "wb") as g:
+            g.write(json.dumps(doc).encode())
+        meta = {"cik": cik, "sha256": file_sha256(path), "path": str(path), "fetched_at": "20261022T000000000000Z",
+                "empty": False}
+        (d / f"CIK{int(cik):010d}.meta.json").write_text(json.dumps(meta), encoding="utf-8")
