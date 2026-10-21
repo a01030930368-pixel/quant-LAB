@@ -91,6 +91,8 @@ NAVER_URL = "https://fchart.stock.naver.com/sise.nhn"
 KRX_NAMES = {"069500": "KODEX 200", "122630": "KODEX 레버리지", "233740": "KODEX 코스닥150레버리지",
              "252670": "KODEX 200선물인버스2X"}
 NAVER_MAX_DAILY_MOVE = 0.35
+NAVER_SPLIT_RATIOS = tuple(r for k in (2, 2.5, 4, 5, 10, 20, 25, 50, 100) for r in (k, 1 / k))
+NAVER_SPLIT_TOLERANCE = 0.10
 _NAVER_ITEM = re.compile(r'<item\s+data="([^"]*)"')
 
 
@@ -107,8 +109,9 @@ def display_name(symbol: str) -> str:
 def parse_naver(text: str) -> pd.DataFrame:
     """Rows `<item data="YYYYMMDD|open|high|low|close|volume" />` of Naver's daily chart.
 
-    Naver serves split-adjusted prices (수정주가) and no dividends, so the frame carries dividend 0 and
-    split 1: returns are price returns. Rows from the early years sometimes have open/high/low 0; they
+    The chart carries no dividends (dividend 0: returns are price returns) and has been seen to keep a
+    split unadjusted (KODEX 레버리지, 2026-07-31), so splits are found by `naver_splits` and recorded
+    as split factors on the raw prices. Rows from the early years sometimes have open/high/low 0; they
     take the close (the same repair as the S&P 500 bundle) and the quality check reports nothing extra."""
     rows = _NAVER_ITEM.findall(text)
     if not rows and "<chartdata" not in text:
@@ -131,6 +134,27 @@ def parse_naver(text: str) -> pd.DataFrame:
     return out[COLUMNS].sort_index()
 
 
+def naver_splits(frame: pd.DataFrame, symbol: str = "") -> pd.DataFrame:
+    """Record unadjusted splits as split factors (shares after / shares before).
+
+    KRX limits a day to ±30%, so a close-to-close step beyond NAVER_MAX_DAILY_MOVE is a split, never a
+    real move. Its factor is the KRX-style ratio (2, 2.5, 4, 5, 10, 20, 25, 50, 100 or the reverse) nearest
+    to previous close / open, which must be within NAVER_SPLIT_TOLERANCE of it; the day's return after
+    the factor must be an ordinary move again. Anything else stops the download."""
+    out = frame.copy()
+    close = out["close"].to_numpy()
+    for i in np.flatnonzero(np.abs(close[1:] / close[:-1] - 1) > NAVER_MAX_DAILY_MOVE) + 1:
+        day = out.index[i].date()
+        q = close[i - 1] / out["open"].iloc[i]
+        k = min(NAVER_SPLIT_RATIOS, key=lambda r: abs(np.log(q / r)))
+        if abs(np.log(q / k)) > np.log(1 + NAVER_SPLIT_TOLERANCE) or \
+                abs(close[i] * k / close[i - 1] - 1) > NAVER_MAX_DAILY_MOVE:
+            raise ProviderError(f"Naver {symbol}: close moved {close[i] / close[i - 1] - 1:+.0%} on {day}, "
+                                f"which is no recognisable split (previous close / open = {q:.3f})")
+        out.iloc[i, out.columns.get_loc("split")] = k
+    return out
+
+
 def fetch_naver(symbol: str, start: str, end: str | None = None, session=None,
                 timeout: float = 30.0) -> tuple[pd.DataFrame, bytes]:
     """Whole daily history of a KRX code (no key needed), cut to [start, end]."""
@@ -145,10 +169,7 @@ def fetch_naver(symbol: str, start: str, end: str | None = None, session=None,
     frame = parse_naver(text)
     if frame.empty:
         raise ProviderError(f"Naver {symbol}: no prices (check the code)")
-    jumps = frame.index[(frame["close"].pct_change().abs() > NAVER_MAX_DAILY_MOVE).to_numpy()]
-    if len(jumps):  # KRX limits a day to ±30%; a bigger step is an unadjusted split, never a real move
-        raise ProviderError(f"Naver {symbol}: close moved more than {NAVER_MAX_DAILY_MOVE:.0%} on "
-                            f"{', '.join(str(d.date()) for d in jumps[:5])} (unadjusted split?)")
+    frame = naver_splits(frame, symbol)
     frame = frame.loc[pd.Timestamp(start):]
     return (frame.loc[: pd.Timestamp(end)] if end else frame), resp.content
 
