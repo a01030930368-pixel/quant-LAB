@@ -98,7 +98,7 @@ def test_spy_market_filters_need_spy_only_when_listed():
 
 
 def test_unadjusted_split_becomes_a_split_factor(monkeypatch):
-    """KODEX 레버리지 came unadjusted for its 2026-07-31 split: the step is recorded as a 1:5 split."""
+    """An unadjusted 1:5 split is recorded as a split factor, not a -79% day."""
     text = ('<chartdata symbol="122630">\n<item data="20260730|100000|101000|99000|100000|1" />\n'
             '<item data="20260731|20300|20500|19800|20600|1" />\n'
             '<item data="20260803|20600|21000|20400|20800|1" />\n</chartdata>')
@@ -112,9 +112,34 @@ def test_unadjusted_split_becomes_a_split_factor(monkeypatch):
     assert daily_total_return(frame).iloc[1] == pytest.approx(0.03)  # an ordinary +3% day, not -79%
 
 
+def test_leveraged_fund_keeps_a_real_extreme_day(monkeypatch):
+    """KOSPI rose +17.9% on 2026-07-31 and KODEX 레버리지 +47%: a real move, not a split."""
+    text = ('<chartdata symbol="122630">\n<item data="20260730|78000|79000|77000|77800|1" />\n'
+            '<item data="20260731|94200|115000|94000|114395|1" />\n'
+            '<item data="20260803|114000|116000|113000|115500|1" />\n</chartdata>')
+    import requests
+
+    monkeypatch.setattr(requests, "get", lambda *a, **k: FakeResponse(text))
+    frame, _ = providers.fetch_naver("122630", "2010-01-01")
+    assert frame["split"].tolist() == [1.0, 1.0, 1.0]
+    from quantlab.data.quality import daily_total_return
+
+    assert daily_total_return(frame).iloc[1] == pytest.approx(114395 / 77800 - 1)
+
+
+def test_same_jump_on_a_1x_fund_is_refused(monkeypatch):
+    text = ('<chartdata symbol="069500">\n<item data="20260730|78000|79000|77000|77800|1" />\n'
+            '<item data="20260731|94200|115000|94000|114395|1" />\n</chartdata>')
+    import requests
+
+    monkeypatch.setattr(requests, "get", lambda *a, **k: FakeResponse(text))
+    with pytest.raises(providers.ProviderError, match="2026-07-31"):
+        providers.fetch_naver("069500", "2010-01-01")
+
+
 def test_unrecognisable_jump_is_refused(monkeypatch):
     text = ('<chartdata symbol="122630">\n<item data="20260105|100000|101000|99000|100000|1" />\n'
-            '<item data="20260106|30000|30500|29800|30100|1" />\n</chartdata>')
+            '<item data="20260106|30000|30500|19800|20000|1" />\n</chartdata>')
     import requests
 
     monkeypatch.setattr(requests, "get", lambda *a, **k: FakeResponse(text))

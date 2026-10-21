@@ -469,10 +469,11 @@ gross per trade, but SPY gained +0.88% over the same 20 sessions (excess +0.23%,
   2026-10-16: its per-trade rebound edge replicated but lost to SPY on Sharpe and drawdown; the same
   edge at 1x (N4X-INTL-1X, +0.34% per trade, t 5.2) lost only to the 0.6% US round trip.
 - KRX prices: new provider Naver Finance daily charts (`fchart.stock.naver.com`, no key), no
-  distributions (dividend 0). The chart was assumed split-adjusted; the first download (2026-10-21)
-  showed KODEX 레버리지's 2026-07-31 split unadjusted, so a close step beyond ±35% (KRX caps a day at
-  ±30%) is recorded as a split factor at the nearest KRX ratio (2, 2.5, 4, 5, 10, ... or reverse) when
-  previous close / open is within 10% of it, and refused otherwise. KRX codes (six characters starting with a digit) go to Naver,
+  distributions (dividend 0). A close step beyond ±35% is recorded as a split factor at the nearest KRX
+  ratio (2, 2.5, 4, 5, 10, ... or reverse) when previous close / open is within 10% of it. Otherwise it is
+  kept as a real move when the fund's leverage allows it (2x funds up to ±70%) and refused beyond that.
+  The first downloads (2026-10-21) stopped on KODEX 레버리지's +47% on 2026-07-31; that was no split but
+  a real day (KOSPI +17.9%, its largest daily rise). KRX codes (six characters starting with a digit) go to Naver,
   US tickers to Tiingo; KRX rows are checked against the XKRX schedule. The format was written from the
   public chart layout; the first download on the user's PC is the real format check.
 - New group AUTO-KR2X (combo catalog 2 without the SPY market filters, 273,600 combinations): KODEX
