@@ -15,6 +15,7 @@ from PySide6.QtCore import Qt, QThreadPool, QTimer
 from PySide6.QtWidgets import (QAbstractItemView, QButtonGroup, QCheckBox, QFileDialog, QHBoxLayout, QHeaderView, QProgressBar, QPushButton,
                                QSpinBox, QTableWidget, QVBoxLayout)
 
+from quantlab.data.providers import display_name
 from quantlab.gui import theme
 from quantlab.gui.home import Card, KeepColors, Page, button, cell, hline, kpi_strip, label, pane_header, pct
 from quantlab.services.autosearch import GROUPS
@@ -46,7 +47,8 @@ def _keep_awake(on: bool) -> None:
 
 GROUP_NAME = {"AUTO-DEVA": "선진국 A", "AUTO-DEVB": "선진국 B", "AUTO-EM": "신흥국", "AUTO-REAL": "채권·금·원자재·리츠",
              "AUTO-LEV": "3배 ETF", "AUTO-LEVP": "3배 ETF + 쉬는 돈 SPY", "AUTO-SP500": "S&P 500 종목",
-             "AUTO-SP500X": "S&P 500 종목 · 공장 1차", "AUTO-SP500Y": "S&P 500 종목 · 공장 2차"}
+             "AUTO-SP500X": "S&P 500 종목 · 공장 1차", "AUTO-SP500Y": "S&P 500 종목 · 공장 2차",
+             "AUTO-KR2X": "한국 레버리지·인버스"}
 GROUP_NOTE = {
     "AUTO-DEVA": "일본·독일·영국·캐나다·호주·프랑스·스위스·홍콩·싱가포르 ETF 9종",
     "AUTO-DEVB": "스웨덴·네덜란드·스페인·이탈리아·벨기에·오스트리아 ETF 6종",
@@ -62,6 +64,8 @@ GROUP_NOTE = {
                    "(2020년 이후 보류 구간은 이미 썼어요)",
     "AUTO-SP500Y": "자동 연구 공장 2차. 1차 재료에 새 정보 5개(S&P 500 편입·편출, 임원 3명 이상 매도, 90일간 매도 없음, "
                    "다음 실적 발표 1~2주 전)를 더해, 새 재료가 하나 이상 들어간 조합만 시험해요",
+    "AUTO-KR2X": "KODEX 레버리지·코스닥150레버리지·200선물인버스2X (2010년부터, 인버스는 2016-09부터). "
+                 "가격은 네이버 증권(키 필요 없음), 비용은 편도 0.065%. KODEX 200 보유와 샤프로 비교",
 }
 
 
@@ -141,7 +145,7 @@ class AutoPage(Page):
         self.body.addWidget(self.group_note)
 
         self.kpis, self.kpi_values = kpi_strip([("시험한 조합", "—", None), ("이 묶음 누적 시험", "—", None),
-                                                ("필요한 t값", "—", None), ("SPY 보유 기준", "—", None),
+                                                ("필요한 t값", "—", None), ("비교 기준 보유", "—", None),
                                                 ("후보", "—", None)])
         self.body.addWidget(self.kpis)
 
@@ -340,7 +344,8 @@ class AutoPage(Page):
         v[1].setText(f"{s['family_trials']:,}")
         v[2].setText(f"{s['t_required']:.2f}")
         b = s.get("beat_value")
-        v[3].setText("—" if b is None else (f"샤프 {b:.2f}" if s.get("beat_metric") == "sharpe" else f"연 {pct(b)}"))
+        v[3].setText("—" if b is None else display_name(s.get("beat_symbol", "SPY")) + " "
+                     + (f"샤프 {b:.2f}" if s.get("beat_metric") == "sharpe" else f"연 {pct(b)}"))
         v[4].setText(f"{sum(1 for c in s['candidates'] if c['status'] == '후보')}")
         if not self.running:
             self.start_btn.setText(f"이어서 하기 ({s['pending']:,}개 남음)" if s["pending"] else "탐색 시작 (3,000개)")
@@ -381,7 +386,7 @@ class AutoPage(Page):
             self.cand_head.setText(f"{total:,}개" + (f" (위 {NEAR_SHOWN}개 표시)" if total > NEAR_SHOWN else ""))
             self.cand_note.setText(
                 "아직 없습니다." if not total else
-                f"앞의 네 기준(거래 수·거래당 수익·두 구간 이익·비용 2배)은 통과했지만 SPY 비교나 그 뒤 기준에서 떨어진 조합입니다. "
+                f"앞의 네 기준(거래 수·거래당 수익·두 구간 이익·비용 2배)은 통과했지만 {display_name(s.get('beat_symbol', 'SPY'))} 비교나 그 뒤 기준에서 떨어진 조합입니다. "
                 f"{by}이 높은 순서입니다. 아이디어를 얻는 용도로만 보세요. 수천 개 중에 골라내면 운 좋은 조합을 집기 쉬워서, "
                 "여기서는 최종 평가를 할 수 없습니다. 맨 위 '사전 고정' 조합만 예외입니다 (미리 정해 둔 하나).")
         else:

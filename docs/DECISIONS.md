@@ -463,7 +463,32 @@ gross per trade, but SPY gained +0.88% over the same 20 sessions (excess +0.23%,
   version kept the first ones it found). Weaker ones leave 모의 투자's list but stay in the file; a
   round finished by an older build refreshes its list once from the final summary.
 
-## D-035 · 2026-10-22 · Rules held for months: LOWVOL-SP500 and INS-HOLD6M
+## D-035 · 2026-10-19 · Korean 2x leveraged and inverse ETFs (AUTO-KR2X)
+- The user asked for a swing strategy on leveraged ETFs, then for KRX-listed funds, and to use the 2x
+  inverse fund too so that results do not rest on one index going up. The US 3x line was closed on
+  2026-10-16: its per-trade rebound edge replicated but lost to SPY on Sharpe and drawdown; the same
+  edge at 1x (N4X-INTL-1X, +0.34% per trade, t 5.2) lost only to the 0.6% US round trip.
+- KRX prices: new provider Naver Finance daily charts (`fchart.stock.naver.com`, no key), no
+  distributions (dividend 0). A close step beyond ±35% is recorded as a split factor at the nearest KRX
+  ratio (2, 2.5, 4, 5, 10, ... or reverse) when previous close / open is within 10% of it. Otherwise it is
+  kept as a real move when the fund's leverage allows it (2x funds up to ±70%) and refused beyond that.
+  The first downloads (2026-10-21) stopped on KODEX 레버리지's +47% on 2026-07-31; that was no split but
+  a real day (KOSPI +17.9%, its largest daily rise). KRX codes (six characters starting with a digit) go to Naver,
+  US tickers to Tiingo; KRX rows are checked against the XKRX schedule. The format was written from the
+  public chart layout; the first download on the user's PC is the real format check.
+- New group AUTO-KR2X (combo catalog 2 without the SPY market filters, 273,600 combinations): KODEX
+  레버리지 122630, KODEX 코스닥150레버리지 233740, KODEX 200선물인버스2X 252670, slots 3, idle cash.
+  The inverse fund is its own leg: an oversold inverse fund is an overbought market.
+- Policy auto_kr2x_v1: KODEX 200 (069500) buy-and-hold as benchmark, Sharpe compared; no risk-free fund
+  (idle cash earns 0; `risk_free_symbol: null` now means a zero series). Costs 1.5 bps commission +
+  5 bps slippage one way (Kiwoom domestic online, no transaction tax on ETF sales; not yet checked
+  against the user's account), stress at 2x; gross bar 0.5% per trade. Splits TRAIN 2010-03..2017,
+  VALIDATION 2018..2021, HOLDOUT 2022+, forward from 2026-10-20. prior_trials 0, with the KORU overlap
+  (AUTO-LEV/LEVP, D-024) disclosed. Pre-tax: leveraged/inverse funds may be "기타 ETF" for tax.
+- Market filters that read another symbol are now validated against the filters a spec lists, not the
+  whole catalog, so a spec without SPY can use catalog 2.
+
+## D-036 · 2026-10-22 · Rules held for months: LOWVOL-SP500 and INS-HOLD6M
 - After factory rounds 1–2 and AUTO-KR2X failed (every line lost its small per-trade edge to the
   0.6% round trip), the user kept the 0.25% commission and chose rules held for months. Instead of
   searching combinations, a few theory-based rules (protocol 제4조 A) are fixed before they are run.

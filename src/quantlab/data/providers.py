@@ -1,4 +1,4 @@
-"""Market data sources: Tiingo EOD (one provider for the MVP) and CSV import.
+"""Market data sources: Tiingo EOD (US), Naver Finance daily charts (KRX ETFs, D-035) and CSV import.
 
 Both return the same normalized frame: DatetimeIndex (naive, session date),
 columns open, high, low, close (raw traded prices), volume, dividend, split,
@@ -12,6 +12,7 @@ to files, logs, the registry or result packets.
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 import numpy as np
@@ -82,6 +83,101 @@ def fetch_tiingo(symbol: str, start: str, end: str | None = None, api_key: str |
     if resp.status_code != 200:
         raise ProviderError(f"Tiingo {symbol}: HTTP {resp.status_code}: {resp.text[:200]}")
     return parse_tiingo(resp.json()), resp.content
+
+
+# --- Naver Finance (KRX) ----------------------------------------------------------
+# Korean listings are 6-character codes (e.g. 122630 KODEX 레버리지); Tiingo does not carry them.
+NAVER_URL = "https://fchart.stock.naver.com/sise.nhn"
+KRX_NAMES = {"069500": "KODEX 200", "122630": "KODEX 레버리지", "233740": "KODEX 코스닥150레버리지",
+             "252670": "KODEX 200선물인버스2X"}
+NAVER_MAX_DAILY_MOVE = 0.35
+# 2x funds move twice their index, whose own daily limit is ±30% (KOSPI rose +17.9% on 2026-07-31).
+NAVER_LEVERAGE = {"122630": 2, "233740": 2, "252670": 2}
+NAVER_SPLIT_RATIOS = tuple(r for k in (2, 2.5, 4, 5, 10, 20, 25, 50, 100) for r in (k, 1 / k))
+NAVER_SPLIT_TOLERANCE = 0.10
+_NAVER_ITEM = re.compile(r'<item\s+data="([^"]*)"')
+
+
+def is_krx(symbol: str) -> bool:
+    """KRX codes are six characters starting with a digit; US tickers start with a letter."""
+    s = str(symbol).strip()
+    return len(s) == 6 and s[0].isdigit() and s.isalnum()
+
+
+def display_name(symbol: str) -> str:
+    return KRX_NAMES.get(str(symbol), str(symbol))
+
+
+def parse_naver(text: str) -> pd.DataFrame:
+    """Rows `<item data="YYYYMMDD|open|high|low|close|volume" />` of Naver's daily chart.
+
+    The chart carries no dividends (dividend 0: returns are price returns) and has been seen to keep a
+    split unadjusted (KODEX 레버리지, 2026-07-31), so splits are found by `naver_splits` and recorded
+    as split factors on the raw prices. Rows from the early years sometimes have open/high/low 0; they
+    take the close (the same repair as the S&P 500 bundle) and the quality check reports nothing extra."""
+    rows = _NAVER_ITEM.findall(text)
+    if not rows and "<chartdata" not in text:
+        raise ProviderError(f"unexpected Naver response: {text[:200]}")
+    recs = []
+    for r in rows:
+        f = r.split("|")
+        if len(f) < 5:
+            raise ProviderError(f"Naver row has {len(f)} fields: {r[:80]}")
+        recs.append((f[0], *(float(x) if x not in ("", "null") else np.nan for x in f[1:6])))
+    if not recs:
+        return pd.DataFrame(columns=COLUMNS, index=pd.DatetimeIndex([], name="date"))
+    df = pd.DataFrame(recs, columns=["date", "open", "high", "low", "close", "volume"][: len(recs[0])])
+    out = pd.DataFrame({c: df[c].astype(float) for c in ("open", "high", "low", "close")})
+    for c in ("open", "high", "low"):
+        out[c] = out[c].where(out[c] > 0, out["close"])
+    out["volume"] = df["volume"].astype(float) if "volume" in df else np.nan
+    out["dividend"], out["split"], out["adj_close"] = 0.0, 1.0, np.nan
+    out.index = pd.DatetimeIndex(pd.to_datetime(df["date"], format="%Y%m%d"), name="date")
+    return out[COLUMNS].sort_index()
+
+
+def naver_splits(frame: pd.DataFrame, symbol: str = "") -> pd.DataFrame:
+    """Record unadjusted splits as split factors (shares after / shares before).
+
+    A close-to-close step beyond NAVER_MAX_DAILY_MOVE is checked for a split: its factor is the KRX-style
+    ratio (2, 2.5, 4, 5, 10, 20, 25, 50, 100 or the reverse) nearest to previous close / open, which must
+    be within NAVER_SPLIT_TOLERANCE of it, and the day's return after the factor must be an ordinary move
+    again. A step that is no split is kept as a real move when a fund's leverage allows it (2x funds up
+    to twice NAVER_MAX_DAILY_MOVE); anything else stops the download."""
+    out = frame.copy()
+    close = out["close"].to_numpy()
+    limit = NAVER_MAX_DAILY_MOVE * NAVER_LEVERAGE.get(symbol, 1)
+    for i in np.flatnonzero(np.abs(close[1:] / close[:-1] - 1) > NAVER_MAX_DAILY_MOVE) + 1:
+        day = out.index[i].date()
+        move = close[i] / close[i - 1] - 1
+        q = close[i - 1] / out["open"].iloc[i]
+        k = min(NAVER_SPLIT_RATIOS, key=lambda r: abs(np.log(q / r)))
+        if abs(np.log(q / k)) <= np.log(1 + NAVER_SPLIT_TOLERANCE) and \
+                abs(close[i] * k / close[i - 1] - 1) <= NAVER_MAX_DAILY_MOVE:
+            out.iloc[i, out.columns.get_loc("split")] = k
+        elif abs(move) > limit:
+            raise ProviderError(f"Naver {symbol}: close moved {move:+.0%} on {day}, which is no recognisable "
+                                f"split (previous close / open = {q:.3f})")
+    return out
+
+
+def fetch_naver(symbol: str, start: str, end: str | None = None, session=None,
+                timeout: float = 30.0) -> tuple[pd.DataFrame, bytes]:
+    """Whole daily history of a KRX code (no key needed), cut to [start, end]."""
+    import requests
+
+    http = session or requests
+    resp = http.get(NAVER_URL, params={"symbol": symbol, "timeframe": "day", "count": 10000, "requestType": 0},
+                    headers={"User-Agent": "Mozilla/5.0"}, timeout=timeout)
+    if resp.status_code != 200:
+        raise ProviderError(f"Naver {symbol}: HTTP {resp.status_code}: {resp.text[:200]}")
+    text = resp.content.decode(resp.encoding or "euc-kr", errors="replace")
+    frame = parse_naver(text)
+    if frame.empty:
+        raise ProviderError(f"Naver {symbol}: no prices (check the code)")
+    frame = naver_splits(frame, symbol)
+    frame = frame.loc[pd.Timestamp(start):]
+    return (frame.loc[: pd.Timestamp(end)] if end else frame), resp.content
 
 
 # --- CSV -------------------------------------------------------------------------

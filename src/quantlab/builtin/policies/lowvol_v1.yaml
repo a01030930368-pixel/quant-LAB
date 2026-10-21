@@ -1,4 +1,4 @@
-# Validation policy for LOWVOL-SP500 (D-035), written 2026-10-22 before the rule was run.
+# Validation policy for LOWVOL-SP500 (D-036), written 2026-10-22 before the rule was run.
 # Splits follow the event-study plan (TRAIN 2010-2015, VALIDATION 2016-2019, holdout 2020-).
 # Costs and gates are the project's standing ones (0.25% one-way + 0.05% slippage; Gate 3 vs SPY).
 # Frozen: the registry stores its hash; changing anything requires version: 2.

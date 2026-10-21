@@ -1,4 +1,4 @@
-"""D-035: rules held for months — low-volatility S&P 500 stocks (LOWVOL-SP500) and insider clusters
+"""D-036: rules held for months — low-volatility S&P 500 stocks (LOWVOL-SP500) and insider clusters
 held six months (INS-HOLD6M)."""
 
 import numpy as np

@@ -1,4 +1,4 @@
-# Low-volatility S&P 500 stocks, picked each quarter (D-035). Fixed 2026-10-22 before this rule was
+# Low-volatility S&P 500 stocks, picked each quarter (D-036). Fixed 2026-10-22 before this rule was
 # run on any data, by Claude or the app; three neighbours are fixed with it (policy lowvol_v1).
 # The stock prices were seen by earlier work (AUTO-SP500 and the factory searched swing rules on them);
 # no volatility ranking or quarterly holding was among those rules.

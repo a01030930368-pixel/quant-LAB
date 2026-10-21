@@ -1,4 +1,4 @@
-"""Low-volatility stocks of a point-in-time index, held for a quarter (rules block `lowvol`, D-035).
+"""Low-volatility stocks of a point-in-time index, held for a quarter (rules block `lowvol`, D-036).
 
     universe:
       market: US_STOCK

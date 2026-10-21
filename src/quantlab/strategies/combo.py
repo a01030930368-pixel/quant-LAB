@@ -150,14 +150,10 @@ def validate_combo(combo: Any, symbols: list[str]) -> list[str]:
         errs.append("rules.combo.slots must be a whole number >= 1")
     if combo.get("park") is not None and (combo["park"] not in symbols or combo["park"] in (trade or [])):
         errs.append("rules.combo.park must be a universe symbol that is not traded")
-    if combo.get("catalog") in CATALOGS:
-        used = {c.get("of") for f in filters(combo["catalog"]).values() for c in f[1]} - {None}
-        if not used <= set(symbols):
-            errs.append(f"catalog {combo['catalog']} reads {sorted(used)}: add them to universe.symbols")
     return errs
 
 
-def validate_params(parameters: dict, catalog: int = 1) -> list[str]:
+def validate_params(parameters: dict, catalog: int = 1, symbols: list[str] | None = None) -> list[str]:
     errs = []
     if catalog not in CATALOGS:
         return []  # reported by validate_combo
@@ -170,6 +166,13 @@ def validate_params(parameters: dict, catalog: int = 1) -> list[str]:
         for v in [p["default"]] + list(p.get("search") or []):
             if v not in space[name]:
                 errs.append(f"parameters.{name}: '{v}' is not in building-block catalog {catalog}")
+    if symbols is not None and isinstance(parameters.get("filter"), dict):
+        # market filters read another symbol (e.g. SPY): only the filters this spec lists need it
+        listed = [parameters["filter"].get("default")] + list(parameters["filter"].get("search") or [])
+        catalog_filters = filters(catalog)
+        used = {c.get("of") for k in listed if k in catalog_filters for c in catalog_filters[k][1]} - {None}
+        if not used <= set(symbols):
+            errs.append(f"parameters.filter reads {sorted(used)}: add them to universe.symbols")
     extra = set(parameters) - set(PARAMS)
     if extra:
         errs.append(f"combo rules take only {PARAMS}; unknown {sorted(extra)}")

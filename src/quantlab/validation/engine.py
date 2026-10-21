@@ -80,6 +80,8 @@ def dev_data(data: MarketData, policy: dict) -> MarketData:
 
 
 def _rf(data: MarketData, policy: dict) -> pd.Series:
+    if not policy.get("risk_free_symbol"):  # no cash fund in the market (KRX policies): idle cash earns 0
+        return pd.Series(0.0, index=data.calendar)
     return total_return_index(data.frames[policy["risk_free_symbol"]]).pct_change().fillna(0.0)
 
 

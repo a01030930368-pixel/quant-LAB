@@ -1,4 +1,4 @@
-# Insider purchase clusters in S&P 500 stocks, held six months (D-035). Fixed 2026-10-22: the same
+# Insider purchase clusters in S&P 500 stocks, held six months (D-036). Fixed 2026-10-22: the same
 # signal as INS-CLUSTER (whose 20-session hold failed), with the holding period the literature
 # measures (six to twelve months) chosen before this hold was run. One rule, one trial.
 spec_version: 1

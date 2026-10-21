@@ -117,3 +117,23 @@ def test_csv_import(tmp_path):
     store = DataStore(tmp_path / "ws")
     rec = store.ingest("X", got, p, {"provider": "csv", "file": p.name})
     assert rec.raw_path.suffix == ".csv" and not rec.qc.fatal
+
+
+def test_parse_naver_daily_chart():
+    from quantlab.data.providers import ProviderError, is_krx, parse_naver
+
+    text = ('<?xml version="1.0" encoding="EUC-KR" ?>\n<protocol>\n'
+            '<chartdata symbol="122630" name="KODEX 레버리지" count="3" timeframe="day" precision="0" origintime="20100222">\n'
+            '<item data="20100222|0|0|0|9990|120" />\n'
+            '<item data="20100223|9900|10100|9850|10050|3400" />\n'
+            '<item data="20100224|10000|10200|9950|10150|2100" />\n'
+            '</chartdata>\n</protocol>')
+    df = parse_naver(text)
+    assert list(df.index.strftime("%Y-%m-%d")) == ["2010-02-22", "2010-02-23", "2010-02-24"]
+    assert df.iloc[0][["open", "high", "low", "close"]].tolist() == [9990.0] * 4  # zero fields take the close
+    assert df.iloc[1]["open"] == 9900 and df.iloc[2]["volume"] == 2100
+    assert (df["dividend"] == 0).all() and (df["split"] == 1).all()
+    assert parse_naver('<chartdata symbol="999999" count="0"></chartdata>').empty
+    with pytest.raises(ProviderError):
+        parse_naver("<html>error</html>")
+    assert is_krx("122630") and is_krx("0193W0") and not is_krx("SPY") and not is_krx("SOXL")
