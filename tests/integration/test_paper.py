@@ -266,3 +266,31 @@ def test_scheduled_task_runs_the_app_twice_a_day_and_catches_up():
     assert root.find(".//t:Exec/t:Command", ns).text == r"C:\Users\A & B\QuantLab\QuantLab.exe"
     assert root.find(".//t:Exec/t:Arguments", ns).text == "--paper-refresh"
     assert root.find(".//t:LogonType", ns).text == "InteractiveToken"
+
+
+def test_a_refresh_does_not_change_the_file_a_running_reader_holds(tmp_path):
+    """The factory (or a backtest) read the meta before the 21:00 paper refresh rewrote the company
+    file: its copy must still match ("SEC 원본 파일이 받은 뒤 바뀌었습니다" before this fix)."""
+    store_submissions(tmp_path, {"1001": [("2020-01-1%d" % i, "8-K", "2.02") for i in range(4)]})
+    before = sec_earnings.records(tmp_path)["1001"]
+
+    class Resp:
+        status_code = 200
+        content = json.dumps({"cik": "1001", "filings": {"recent": {
+            "accessionNumber": ["n1"], "filingDate": ["2021-02-01"], "form": ["8-K"], "items": ["2.02"],
+            "acceptanceDateTime": [""]}, "files": []}}).encode()
+
+    class Http:
+        def get(self, url, headers=None, timeout=0):
+            return Resp()
+
+    real = sec_earnings.PAUSE_SECONDS
+    sec_earnings.PAUSE_SECONDS = 0
+    try:
+        EARN_DOWNLOAD(tmp_path, "someone@example.com", ["1001"], session=Http(), refresh_before="20991231")
+    finally:
+        sec_earnings.PAUSE_SECONDS = real
+    after = sec_earnings.records(tmp_path)["1001"]
+    assert after["path"] != before["path"] and file_sha256(after["path"]) == after["sha256"]
+    assert len(sec_earnings.load_parsed(before)) == 4          # the old reader still loads its file
+    assert set(sec_earnings.load_parsed(after)["accession"]) == {"n1"}

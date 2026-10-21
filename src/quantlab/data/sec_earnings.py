@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import gzip
 import json
+import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -29,6 +30,7 @@ from quantlab.data.sec_insider import user_agent
 API = "https://data.sec.gov/submissions/"
 PARSE_VERSION = 1
 PAUSE_SECONDS = 0.12   # about 8 requests a second, under the SEC's limit of 10
+KEEP_OLD_SECONDS = 7 * 86400  # replaced company files stay this long for readers that started before
 
 
 def store_dir(root: str | Path) -> Path:
@@ -92,14 +94,34 @@ def download(root: str | Path, email: str, ciks: list[str], session=None, say=No
             if page is None:
                 raise RuntimeError(f"SEC submissions page missing: {f['name']}")
             pages.append(page)
-        path = d / f"CIK{int(cik):010d}.json.gz"
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        # A refresh writes a new file and then points the meta file at it, so a backtest or the
+        # factory reading the company at the same time keeps a file that matches its meta.
+        path = d / (f"CIK{int(cik):010d}.json.gz" if cik not in have else f"CIK{int(cik):010d}-{stamp}.json.gz")
         with gzip.open(path, "wb") as g:
             g.write(b"[" + b",".join(pages) + b"]")
-        meta = {"cik": cik, "sha256": file_sha256(path), "pages": len(pages), "path": str(path),
-                "fetched_at": datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")}
-        (d / f"CIK{int(cik):010d}.meta.json").write_text(json.dumps(meta), encoding="utf-8")
+        meta = {"cik": cik, "sha256": file_sha256(path), "pages": len(pages), "path": str(path), "fetched_at": stamp}
+        tmp = d / f"CIK{int(cik):010d}.meta.json.tmp"
+        tmp.write_text(json.dumps(meta), encoding="utf-8")
+        os.replace(tmp, d / f"CIK{int(cik):010d}.meta.json")
         fetched.append(cik)
+    _prune(d)
     return {"fetched": fetched, "missing": missing}
+
+
+def _prune(d: Path) -> None:
+    """Delete replaced company files (and their parse caches) once no meta file points at them and
+    they are older than KEEP_OLD_SECONDS."""
+    current = {Path(m["path"]).name for m in (json.loads(p.read_text(encoding="utf-8")) for p in d.glob("*.meta.json"))}
+    now = time.time()
+    for p in d.glob("CIK*-*.json.gz*"):
+        base = p.name.split(".json.gz")[0] + ".json.gz"
+        if base in current or now - p.stat().st_mtime < KEEP_OLD_SECONDS:
+            continue
+        try:
+            p.unlink()
+        except OSError:  # still open in another process (Windows); next time
+            pass
 
 
 def _columns(page: dict) -> dict:
