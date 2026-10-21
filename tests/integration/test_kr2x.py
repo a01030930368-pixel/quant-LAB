@@ -97,9 +97,24 @@ def test_spy_market_filters_need_spy_only_when_listed():
     assert A.GROUPS[-1] == "AUTO-KR2X"
 
 
-def test_unadjusted_split_is_refused(monkeypatch):
+def test_unadjusted_split_becomes_a_split_factor(monkeypatch):
+    """KODEX 레버리지 came unadjusted for its 2026-07-31 split: the step is recorded as a 1:5 split."""
+    text = ('<chartdata symbol="122630">\n<item data="20260730|100000|101000|99000|100000|1" />\n'
+            '<item data="20260731|20300|20500|19800|20600|1" />\n'
+            '<item data="20260803|20600|21000|20400|20800|1" />\n</chartdata>')
+    import requests
+
+    monkeypatch.setattr(requests, "get", lambda *a, **k: FakeResponse(text))
+    frame, _ = providers.fetch_naver("122630", "2010-01-01")
+    assert frame["split"].tolist() == [1.0, 5.0, 1.0]
+    from quantlab.data.quality import daily_total_return
+
+    assert daily_total_return(frame).iloc[1] == pytest.approx(0.03)  # an ordinary +3% day, not -79%
+
+
+def test_unrecognisable_jump_is_refused(monkeypatch):
     text = ('<chartdata symbol="122630">\n<item data="20260105|100000|101000|99000|100000|1" />\n'
-            '<item data="20260106|20000|20500|19800|20100|1" />\n</chartdata>')
+            '<item data="20260106|30000|30500|29800|30100|1" />\n</chartdata>')
     import requests
 
     monkeypatch.setattr(requests, "get", lambda *a, **k: FakeResponse(text))
