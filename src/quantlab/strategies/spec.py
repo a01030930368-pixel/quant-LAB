@@ -111,7 +111,7 @@ def check_schema(spec: Any) -> list[str]:
 
         if un["index"] not in INDEXES:
             p.append(f"universe.index must be one of {list(INDEXES)}")
-    for block in ("insider", "earnings", "stock_combo"):
+    for block in ("insider", "earnings", "stock_combo", "lowvol"):
         if spec["rules"].get(block) is not None and "index" not in un:
             p.append(f"{block} rules trade an index's stocks: set universe.index")
     if un["frequency"] != "daily":
@@ -249,6 +249,10 @@ def load_spec(path: str | Path) -> LoadedSpec:
                 from quantlab.strategies.stock_combo import StockComboStrategy
 
                 return StockComboStrategy(spec_id=sid, spec_version_str=ver, rules=rules, **params)
+            if "lowvol" in rules:
+                from quantlab.strategies.lowvol import LowVolStrategy
+
+                return LowVolStrategy(spec_id=sid, spec_version_str=ver, rules=rules, **params)
             if "calendar" in rules:
                 from quantlab.strategies.calendar_tom import CalendarStrategy
 

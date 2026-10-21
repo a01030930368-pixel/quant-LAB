@@ -1,0 +1,48 @@
+# Low-volatility S&P 500 stocks, picked each quarter (D-035). Fixed 2026-10-22 before this rule was
+# run on any data, by Claude or the app; three neighbours are fixed with it (policy lowvol_v1).
+# The stock prices were seen by earlier work (AUTO-SP500 and the factory searched swing rules on them);
+# no volatility ranking or quarterly holding was among those rules.
+spec_version: 1
+strategy:
+  id: LOWVOL-SP500
+  version: 1.0.0
+  name: 덜 출렁이는 종목 50개 (S&P 500, 분기마다 교체)
+  type: rotation
+  author: claude
+  parent: null
+  derived_after_holdout_view: false
+hypothesis:
+  class: theory
+  economic_rationale: >
+    Stocks with low past volatility have earned about the market's return with much less risk, so a
+    higher return per unit of risk (low-volatility anomaly; Haugen & Heins 1975, Ang et al. 2006,
+    Baker, Bradley & Wurgler 2011, Frazzini & Pedersen 2014). Explanations: leverage-constrained and
+    benchmarked investors overpay for volatile stocks. Quarterly turnover keeps costs small.
+  expected_risks:
+    - the calm stocks lag in strong bull markets, so return may trail SPY even when risk is lower
+    - holdings bunch in a few sectors (utilities, staples, REITs) and are sensitive to interest rates
+    - the effect is widely known since the 2010s and low-volatility funds may have priced it in
+  falsification: >
+    Net Sharpe not above SPY buy-and-hold with block-bootstrap p < 0.10, or max drawdown above 80% of
+    SPY's; or one of the neighbours (top 30 or 100, 126-session volatility) with a Sharpe below SPY's.
+universe:
+  market: US_STOCK
+  index: SP500
+  symbols: [SPY, BIL]
+  frequency: daily
+rules:
+  kind: declarative
+  lowvol:
+    months: [3, 6, 9, 12]
+    park: SPY
+execution:
+  signal_time: close
+  fill: next_open
+  rebalance: daily
+parameters:
+  lookback: {default: 252}
+  top_n: {default: 50}
+benchmark: SPY_buy_and_hold
+costs: {one_way_bps: 30}   # informational; the validation policy's costs are binding
+validation:
+  policy: lowvol_v1

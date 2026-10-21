@@ -1,0 +1,51 @@
+# Insider purchase clusters in S&P 500 stocks, held six months (D-035). Fixed 2026-10-22: the same
+# signal as INS-CLUSTER (whose 20-session hold failed), with the holding period the literature
+# measures (six to twelve months) chosen before this hold was run. One rule, one trial.
+spec_version: 1
+strategy:
+  id: INS-HOLD6M
+  version: 1.0.0
+  name: 내부자 여러 명 매수 따라가기 (S&P 500, 6개월 보유)
+  type: event
+  author: claude
+  parent: INS-CLUSTER@1.0.0
+  derived_after_holdout_view: false
+hypothesis:
+  class: theory
+  economic_rationale: >
+    Open-market purchases by several officers or directors signal private information; the excess
+    return after them builds up over six to twelve months rather than weeks (Lakonishok & Lee 2001;
+    Jeng, Metrick & Zeckhauser 2003; Cohen, Malloy & Pomorski 2012). Holding six months cuts the number
+    of trades, so the 0.6% round trip weighs less on each.
+  expected_risks:
+    - INS-CLUSTER found only +0.23% over SPY in 20 days in 2010-2019; the longer drift may also be small in large caps
+    - purchases bunch after market falls (2011, 2015-16, 2020), so the 20 slots may fill at once
+    - six months of single-stock risk; drawdowns may be deeper than SPY's
+  falsification: >
+    Net Sharpe not above SPY buy-and-hold with block-bootstrap p < 0.10, or max drawdown above 80% of
+    SPY's. Trade level: mean return over SPY held for the same days at or below the 0.6% round trip.
+universe:
+  market: US_STOCK
+  index: SP500
+  symbols: [SPY, BIL]
+  frequency: daily
+rules:
+  kind: declarative
+  insider:
+    roles: [officer, director]
+    min_value: 10000
+    min_insiders: 2
+    window_days: 30
+    hold_days: 126
+    slots: 20
+    park: SPY
+    park_band: 2
+execution:
+  signal_time: close
+  fill: next_open
+  rebalance: daily
+parameters: {}
+benchmark: SPY_buy_and_hold
+costs: {one_way_bps: 30}   # informational; the validation policy's costs are binding
+validation:
+  policy: ins_hold6m_v1
