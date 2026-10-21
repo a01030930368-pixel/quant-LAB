@@ -116,6 +116,14 @@ class Lab:
     def fetch(self, symbols: list[str], start: str, end: str | None = None) -> list[RawRecord]:
         out = []
         for s in symbols:
+            if providers.is_krx(s):  # KRX codes come from Naver, checked against the Korea Exchange schedule
+                from quantlab.data.quality import exchange_sessions
+
+                frame, raw = providers.fetch_naver(s, start, end)
+                sessions = exchange_sessions(frame.index.min(), frame.index.max(), "XKRX")
+                out.append(self.data.ingest(s, frame, raw, {"provider": "naver", "start": start, "end": end},
+                                            sessions=sessions))
+                continue
             frame, raw = providers.fetch_tiingo(s, start, end)
             out.append(self.data.ingest(s, frame, raw, {"provider": "tiingo", "start": start, "end": end}))
         return out
@@ -242,9 +250,10 @@ class Lab:
         for s in symbols:
             recs = self.data.raw_records(s)
             fresh = recs and recs[-1]["fetched_at"][:8] >= today
-            if fresh or (recs and not key):
+            needs_key = not providers.is_krx(s)  # Naver (KRX) needs no key
+            if fresh or (recs and needs_key and not key):
                 continue
-            if not key:
+            if needs_key and not key:
                 raise RuntimeError(f"{s} 가격 자료가 없습니다. 먼저 Tiingo API 키를 저장하세요.")
             say(f"{s} 가격 받는 중")
             self.fetch([s], start)

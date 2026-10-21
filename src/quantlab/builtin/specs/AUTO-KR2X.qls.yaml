@@ -1,0 +1,57 @@
+# Generator spec of the automatic strategy search on Korean 2x leveraged and 2x inverse ETFs (D-035).
+# Its parameters pick one building block from each list (quantlab.strategies.combo, catalog 2, as
+# AUTO-LEV); every combination is one registered trial. The search runs on TRAIN+VALIDATION only.
+# The SPY market filters of catalog 2 are left out: SPY is not in this market.
+spec_version: 1
+strategy:
+  id: AUTO-KR2X
+  version: 1.0.0
+  name: 자동 탐색 · 한국 레버리지·인버스 2배 ETF
+  type: mean_reversion
+  author: claude
+  parent: null
+  derived_after_holdout_view: false
+hypothesis:
+  class: data_mining
+  economic_rationale: >
+    The oversold-rebound edge seen on US-listed index ETFs (+0.34% per trade before costs at 1x, t 5.2)
+    lost only to the 0.6% US round trip. KRX-listed ETFs cost far less to trade (no securities
+    transaction tax on ETF sales, low domestic commission), so short swing rules on the KOSPI 200 and
+    KOSDAQ 150 may clear their costs. Holding the 2x inverse fund as its own leg lets the same rules act
+    on sharp rallies (an oversold inverse fund is an overbought market), so results do not rest on one
+    direction of one index. No single rule is claimed in advance: the search tests a fixed grid and only
+    combinations that clear cost, consistency and multiple-testing filters become candidates.
+  expected_risks:
+    - many trials make lucky combinations look good (corrected by the trial count)
+    - the KOSPI legs (2x and 2x inverse) track the same index; the inverse fund lists only from 2016-09
+    - daily-reset 2x funds decay in sideways markets
+    - cost estimate (commission 0.015% + 0.05% slippage) is not yet checked against the user's account
+    - KOSPI 2013-2019 was already seen through KORU (AUTO-LEV/LEVP) and its 2020+ through one rule (D-024)
+  falsification: >
+    On the holdout (2022-01 onward), net Sharpe not above KODEX 200 buy-and-hold with block-bootstrap
+    p < 0.10, or max drawdown above 80% of KODEX 200's.
+universe:
+  market: KRX_ETF
+  symbols: ["122630", "233740", "252670", "069500"]
+  frequency: daily
+rules:
+  kind: declarative
+  combo:
+    catalog: 2
+    trade: ["122630", "233740", "252670"]   # KODEX 레버리지, KODEX 코스닥150레버리지, KODEX 200선물인버스2X
+    slots: 3
+execution:
+  signal_time: close
+  fill: next_open
+  rebalance: daily
+parameters:
+  entry: {default: z20_1.5, search: [z20_1.5, z20_2.0, z20_2.5, z20_3.0, rsi2_2, rsi2_5, rsi2_10, rsi2_15, down3, down4, down5, down6, ret5_3, ret5_5, ret5_8, ret5_12, ret5_15, ret10_5, ret10_8, ret10_12, ret10_16, ret10_20, low20, low60, low120, ibs_0.05, ibs_0.1, ibs_0.2, below5_2, below5_4, below5_6, below20_4, below20_7, below20_10, below20_15, below60_7, below60_12, below60_16, below60_20, below120_10, below120_15, below120_20, below120_25, golden5_20, golden20_60, golden60_120, breakup20, breakup60, breakup120, macd_up, macd_up_neg, rsi14_30, rsi14_25, rsi14_20, ret20_10, ret20_15, ret20_20]}
+  filter: {default: none, search: [none, up200, up120, aligned, down200, macd_pos, up60, macd_neg]}
+  exit: {default: none, search: [none, above5, above10, above20, rsi2_70, macd_dn, below20, rsi2_50, rsi2_90, high5]}
+  max_hold: {default: 5, search: [3, 5, 10, 20, 30]}
+  stop: {default: 0, search: [0, 0.1, 0.2]}
+  take: {default: 0, search: [0, 0.1, 0.2, 0.3]}
+benchmark: KODEX200_buy_and_hold
+costs: {one_way_bps: 6.5}   # informational; the validation policy's costs are binding
+validation:
+  policy: auto_kr2x_v1

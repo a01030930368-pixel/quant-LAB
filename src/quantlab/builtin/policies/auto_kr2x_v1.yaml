@@ -1,0 +1,70 @@
+# Validation policy for AUTO-KR2X — automatic strategy search on KRX 2x ETFs: KODEX 레버리지 (122630,
+# KOSPI 200 2x, lists 2010-02), KODEX 코스닥150레버리지 (233740, lists 2015-12) and KODEX 200선물인버스2X
+# (252670, KOSPI 200 futures -2x, lists 2016-09), compared with KODEX 200 (069500) buy-and-hold on Sharpe.
+# Written 2026-10-19 before any KRX data was downloaded by the app or seen by Claude (D-035). The user asked
+# for leveraged ETF swing trading and to use the inverse fund too, so results do not rest on one index going up.
+# Prices: Naver Finance daily charts (split-adjusted, no distributions), so KODEX 200's ~1-2%/yr
+# distributions are left out of the benchmark (it is understated by that much). Pre-tax.
+# Costs: the user's 0.25% one-way rule is their US account's; KRX ETF sales carry no securities
+# transaction tax and Kiwoom's domestic online commission is about 0.015%. 6.5 bps one way (0.015% + 0.05%
+# slippage at the open auction), and every result must also survive twice that. The gross bar is 0.5%
+# per trade (about four round trips), kept well above the cost because the estimate is not yet checked.
+# No KRW cash fund lists before 2012, so idle cash earns 0 (risk_free_symbol null).
+# Splits: the inverse fund has 15 months in TRAIN; holdout 2022-01 on (about 4.8 years).
+# prior_trials 0: a new market and instruments. Disclosed: the KOSPI was already seen through KORU (US 3x,
+# AUTO-LEV/LEVP 2013-2019 grid and one pre-fixed rule on 2020-2026), so this holdout is not fully blind.
+# Frozen: the registry stores its hash; changing anything requires version: 2.
+policy_id: auto_kr2x
+version: 1
+strategy_family: AUTO-KR2X
+universe: ["122630", "233740", "252670", "069500"]
+benchmark_symbol: "069500"
+risk_free_symbol: null
+initial_cash: 100000000
+
+splits:
+  train: ["2010-03-01", "2017-12-31"]
+  validation: ["2018-01-01", "2021-12-31"]
+  holdout: ["2022-01-01", null]
+  forward_holdout_start: "2026-10-20"
+
+costs:
+  commission_bps: 1.5           # Kiwoom domestic online (approx.); no transaction tax on ETF sales
+  slippage_bps: 5.0
+  fixed_fee: 0.0
+
+gate1:
+  leak_test_cutpoints: 5
+  leak_test_seed: 20261019
+
+gate2:
+  min_sharpe_diff: -0.10
+  max_mdd_ratio: 0.90
+  rule: "PASS if sharpe_diff >= min_sharpe_diff OR mdd_ratio <= max_mdd_ratio, else FAIL"
+
+gate3:
+  min_sharpe_diff: 0.0
+  bootstrap: {block: 63, n_boot: 10000, seed: 20261019, max_p_value: 0.10}
+  max_mdd_ratio: 0.80
+  min_position_changes: 6
+  min_sessions: 504
+
+gate4_partial:
+  stress_cost_multiplier: 2.0
+  stress_min_sharpe_diff: 0.0
+  neighbor_params: {}            # neighbours are checked during the search (TRAIN+VALIDATION), see auto_search
+  neighbor_min_sharpe_diff: 0.0
+
+auto_search:
+  trials_per_run: 3000
+  order_seed: 20261019
+  prior_trials: 0
+  min_trades_train: 40
+  min_trades_validation: 20
+  min_gross_per_trade: 0.005    # ~4 round trips at 0.13%; the 1.2% of US groups was 2x their 0.6%
+  stress_cost_multiplier: 2.0   # CAGR must stay above 0 at twice the costs
+  max_drawdown_floor: -0.35
+  beat_symbol: "069500"
+  beat_metric: sharpe           # Sharpe above KODEX 200 buy-and-hold's over the same TRAIN+VALIDATION window
+  alpha: 0.05                   # one-sided; Bonferroni over the family's trial count
+  neighbour_min_share: 0.5
