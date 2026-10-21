@@ -14,6 +14,7 @@
         hold_days: 20                # sessions from the entry fill to the exit fill
         slots: 10                    # each position holds 1/slots of equity
         park: SPY                    # equity not in a position is held here
+        park_band: 2                 # optional: resize the park only when it is off by this many slots
 
 A signal fires at the close of the session on which the count of distinct insiders reaches
 `min_insiders` (it was below it before that session's filings), for a stock that is an index member
@@ -32,6 +33,7 @@ from quantlab.strategies.base import MarketView, PartialWeights, Strategy
 
 ROLES = ("officer", "director")
 KEYS = ("roles", "min_value", "min_insiders", "window_days", "hold_days", "slots", "park")
+OPTIONAL = ("park_band",)
 INDEXES = ("SP500",)
 
 
@@ -42,7 +44,7 @@ def validate_insider(cfg: Any, symbols: list[str]) -> list[str]:
     missing = [k for k in KEYS if k not in cfg]
     if missing:
         errs.append(f"rules.insider needs {missing}")
-    extra = set(cfg) - set(KEYS)
+    extra = set(cfg) - set(KEYS) - set(OPTIONAL)
     if extra:
         errs.append(f"rules.insider: unknown keys {sorted(extra)}")
     roles = cfg.get("roles")
@@ -57,6 +59,9 @@ def validate_insider(cfg: Any, symbols: list[str]) -> list[str]:
         errs.append("rules.insider.min_value must be a number >= 0")
     if cfg.get("park") is not None and cfg.get("park") not in symbols:
         errs.append("rules.insider.park must be one of universe.symbols")
+    b = cfg.get("park_band")
+    if "park_band" in cfg and (not isinstance(b, int) or isinstance(b, bool) or b < 1):
+        errs.append("rules.insider.park_band must be a whole number >= 1")
     return errs
 
 
@@ -69,6 +74,7 @@ class InsiderClusterStrategy(Strategy):
         self.excess_benchmark = "SPY"  # each trade is also compared with SPY held for the same days
         self.held: dict[str, int] = {}  # symbol -> sessions since its entry signal
         self.started = False
+        self.park_w: float | None = None
 
     def describe(self) -> dict:
         return {"strategy_id": self.strategy_id, "version": self.version, "params": self.params,
@@ -123,7 +129,13 @@ class InsiderClusterStrategy(Strategy):
         for _, s in picks:
             w[s] = 1.0 / slots
             self.held[s] = 0
-        if park and (exits or picks or not self.started):
-            w[park] = max(0.0, 1.0 - len(self.held) / slots)
+        room = max(0.0, 1.0 - len(self.held) / slots)
+        if park and "park_band" in c:  # refilled in batches, as PEAD-SP500
+            band = int(c["park_band"]) / slots
+            if self.park_w is None or self.park_w > room + 1e-9 or room - self.park_w >= band - 1e-9:
+                self.park_w = room
+                w[park] = room
+        elif park and (exits or picks or not self.started):
+            w[park] = room
         self.started = True
         return w or None

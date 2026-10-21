@@ -487,3 +487,19 @@ gross per trade, but SPY gained +0.88% over the same 20 sessions (excess +0.23%,
   (AUTO-LEV/LEVP, D-024) disclosed. Pre-tax: leveraged/inverse funds may be "기타 ETF" for tax.
 - Market filters that read another symbol are now validated against the filters a spec lists, not the
   whole catalog, so a spec without SPY can use catalog 2.
+
+## D-036 · 2026-10-22 · Rules held for months: LOWVOL-SP500 and INS-HOLD6M
+- After factory rounds 1–2 and AUTO-KR2X failed (every line lost its small per-trade edge to the
+  0.6% round trip), the user kept the 0.25% commission and chose rules held for months. Instead of
+  searching combinations, a few theory-based rules (protocol 제4조 A) are fixed before they are run.
+- LOWVOL-SP500 1.0.0 (`lowvol` rules): at the last close of March, June, September and December the
+  50 S&P 500 members with the lowest standard deviation of daily returns over 252 sessions are held at
+  equal weight from the next open; everything else is sold. SPY is held until the first pick (data
+  starts in 2010, so the first pick is early 2011). Policy lowvol_v1 = ins_cluster_v1's splits, costs
+  and gates, with three neighbours fixed with the rule (top 30, top 100, 126-session volatility).
+- INS-HOLD6M 1.0.0: INS-CLUSTER's signal (2+ officers or directors buying $10k+ within 30 days) held
+  126 sessions in 20 slots, idle equity in SPY refilled two slots at a time (`park_band`, new optional
+  key of the insider block; INS-CLUSTER is unchanged). Policy ins_hold6m_v1.
+- Both families are new, so they have their own 2020+ holdout. The S&P 500 prices after 2020 were
+  already used by GAP-EARN-SP500's final evaluation (a different rule); whether to open the holdout for
+  these is the user's decision. Forward paper data counts from 2026-10-23.
