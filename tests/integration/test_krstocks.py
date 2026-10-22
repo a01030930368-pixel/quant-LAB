@@ -66,6 +66,20 @@ def test_parse_reads_numbers_with_separators_and_short_codes(tmp_path, snaps):
     assert len(table) == len(rows) and list(inputs) == ["KOSPI/2012"]
 
 
+def test_an_empty_day_keeps_the_table_numeric(tmp_path, snaps):
+    part = small(snaps, "2012-05-02", "2012-05-31")
+    part[("KOSPI", pd.Timestamp("2012-05-10"))] = []          # the exchange answered with no rows
+    part[("KOSDAQ", pd.Timestamp("2012-05-10"))] = []
+    store_snapshots(tmp_path, part)
+    store_snapshots(tmp_path, {("KOSPI", pd.Timestamp("2013-01-02")): []})   # a year with no rows at all
+    table = krx_open.load(tmp_path)[0]
+    assert table["close"].dtype == "float64" and table["mktcap"].dtype == "float64"
+    assert pd.api.types.is_datetime64_any_dtype(table["date"])
+    days = krx_open.sessions("2012-05-02", "2012-05-31")
+    frames, _ = kr_stocks.adjusted(table, days, ["005930"])
+    assert frames["005930"]["close"].notna().sum() == len(days) - 1
+
+
 # --- prices and universe ------------------------------------------------------------------------
 @pytest.fixture(scope="module")
 def table(tmp_path_factory, snaps):

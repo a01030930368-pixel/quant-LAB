@@ -36,12 +36,28 @@ MARKETS = {"KOSPI": "stk_bydd_trd", "KOSDAQ": "ksq_bydd_trd"}
 FIRST_DAY = "2010-01-04"
 PAUSE_SECONDS = 0.05
 RECENT_DAYS = 10          # an empty answer this close to today may only mean "not published yet"
-PARSE_VERSION = 1
+PARSE_VERSION = 2          # 2: typed columns (empty days made every column an object)
 NUMERIC = {"TDD_OPNPRC": "open", "TDD_HGPRC": "high", "TDD_LWPRC": "low", "TDD_CLSPRC": "close",
            "CMPPREVDD_PRC": "change", "ACC_TRDVOL": "volume", "ACC_TRDVAL": "value", "MKTCAP": "mktcap",
            "LIST_SHRS": "shares"}
 COLUMNS = ["date", "market", "code", "name", "section", "open", "high", "low", "close", "change", "volume",
            "value", "mktcap", "shares"]
+
+
+def _empty() -> pd.DataFrame:
+    """No rows, but the columns' types: an untyped empty frame turns every column of a concat into objects."""
+    df = pd.DataFrame({c: pd.Series(dtype="float64") for c in COLUMNS})
+    df["date"] = pd.Series(dtype="datetime64[ns]")
+    for c in ("market", "code", "name", "section"):
+        df[c] = pd.Series(dtype="object")
+    return df
+
+
+def _typed(df: pd.DataFrame) -> pd.DataFrame:
+    df["date"] = pd.to_datetime(df["date"])
+    for c in NUMERIC.values():
+        df[c] = pd.to_numeric(df[c], errors="coerce").astype("float64")
+    return df
 
 
 class KrxError(RuntimeError):
@@ -144,7 +160,7 @@ def parse_day(path: str | Path, market: str) -> pd.DataFrame:
         rows = _rows(g.read())
     day = pd.Timestamp(Path(path).name[:8])
     if not rows:
-        return pd.DataFrame(columns=COLUMNS)
+        return _empty()
     df = pd.DataFrame(rows)
     if "ISU_CD" not in df or "TDD_CLSPRC" not in df:
         raise KrxError(f"KRX {market} {day.date()}: 종목코드·종가 열이 없습니다 (형식이 바뀐 것 같습니다)")
@@ -177,13 +193,13 @@ def load(root: str | Path, start=None, end=None, say=None) -> tuple[pd.DataFrame
                 parts.append(pd.read_parquet(cache))
                 continue
             say(f"한국거래소 자료 정리 중: {m} {y}")
-            frames = [parse_day(p, m) for _, p in sorted(fs.items())]
-            year = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=COLUMNS)
+            frames = [f for f in (parse_day(p, m) for _, p in sorted(fs.items())) if len(f)]
+            year = _typed(pd.concat(frames, ignore_index=True)) if frames else _empty()
             year.to_parquet(cache, index=False)
             parts.append(year)
-    df = pd.concat(parts, ignore_index=True) if parts else pd.DataFrame(columns=COLUMNS)
+    parts = [p for p in parts if len(p)]
+    df = _typed(pd.concat(parts, ignore_index=True)) if parts else _empty()
     if len(df):
-        df["date"] = pd.to_datetime(df["date"])
         if start is not None:
             df = df[df["date"] >= pd.Timestamp(start)]
         if end is not None:
