@@ -520,3 +520,31 @@ gross per trade, but SPY gained +0.88% over the same 20 sessions (excess +0.23%,
   at equal weight. SPY is held until the first pick (about February 2011, when the first floats after
   the data start are known). Banks and insurers without a gross profit line are not ranked. Policy
   valq_v1 = lowvol_v1 with neighbours top 30 and top 100; its own 2020+ holdout, as in D-036.
+
+## D-038 · 2026-10-22 · Korean stocks: KRX Open API, KRTOP300 and factory round 3 (AUTO-KRSTK)
+- After every S&P 500 line failed at the 0.6% US round trip and LOWVOL-SP500's final evaluation failed,
+  the user chose Korean stocks. A KRX round trip costs about 0.43%: Kiwoom domestic commission 0.015%
+  each way (default rate, not yet checked against the user's account), 0.20% securities transaction tax
+  on stock sales (2026 rate; applied to every year), 0.10% slippage each way.
+- Data: the exchange's KRX Open API (`quantlab.data.krx_open`, the user's free key in the Windows
+  credential store), one snapshot of every listed stock per session and market since 2010, so delisted
+  names are in the history. About 8,300 calls for both markets against a ~10,000 daily limit; a run that
+  hits the limit stops and the next one continues. The layout was taken from public clients of the API;
+  the first download on the user's PC is the real format check. pykrx is not used (it now needs a KRX
+  website login).
+- Adjusted prices (`quantlab.data.kr_stocks`): close / (close - change) - 1 is the day's return against
+  the exchange's base price, which it resets for splits and rights issues; dividends are left out (price
+  returns, as KODEX 200 from Naver). Halted days have no open, so orders wait.
+- Universe KRTOP300, fixed at each month's last close for the next month: common stocks (no preferred,
+  SPAC, REIT or funds), not 관리종목 or 투자주의환기, traded on 120 of the last 126 sessions, median
+  traded value of 20 sessions at least 2 billion won, then the 300 largest by market value; a member
+  counts on a session only when it traded.
+- Engine: `sell_tax_bps` on sales of symbols not in `tax_exempt` (ETFs); not scaled by cost stress.
+- Stock catalog 5: the price items of catalog 3 without the SPY ones, KODEX 200 trend and 5-day fall,
+  and closes at the daily price limit (±15% before 2015-06-15, ±30% after); 1,705 entries, 276,210
+  combinations. Trades are compared with KODEX 200 held for the same days; idle equity is in KODEX 200.
+- Policy auto_krstk_v1: TRAIN 2010-2015, VALIDATION 2016-2019, HOLDOUT 2020+, forward from 2026-10-26;
+  gross bar 0.9% per trade over KODEX 200; CAGR above KODEX 200's; prior_trials 0 (new stocks), with the
+  KOSPI's path already seen through KORU and the KRX 2x ETFs disclosed.
+- The factory runs AUTO-KRSTK as round 3 after the two S&P 500 rounds; without a KRX key it stops with a
+  message on the factory page.

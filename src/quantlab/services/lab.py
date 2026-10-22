@@ -290,7 +290,8 @@ class Lab:
 
     def needs_sec_email(self, spec_path: str | Path) -> bool:
         spec = yaml.safe_load(Path(spec_path).read_text(encoding="utf-8"))
-        return "index" in (spec.get("universe") or {}) and self.sec_email() is None
+        un = spec.get("universe") or {}
+        return "index" in un and un["index"] != "KRTOP300" and self.sec_email() is None
 
     def ensure_index_dataset(self, base_version: str, start: str, say=None, refresh: bool = False,
                              today: str | None = None, facts: bool = False) -> str:
@@ -336,9 +337,35 @@ class Lab:
             say("품질 검사 치명 항목이 있습니다. 결과는 INVALID로 처리됩니다.")
         return version
 
+    def has_krx_key(self) -> bool:
+        return providers.get_api_key("krx") is not None
+
+    def ensure_kr_dataset(self, base_version: str, start: str, say=None, today=None) -> str:
+        """Korean stocks (KRTOP300, D-038) on top of the KODEX 200 dataset `base_version`: downloads the
+        exchange's snapshots not stored yet (KRX Open API, the user's key), then builds or reuses."""
+        from quantlab.data import kr_dataset, krx_open
+
+        say = say or (lambda s: None)
+        key = providers.get_api_key("krx")
+        if not key:
+            raise RuntimeError("한국 주식 자료를 받으려면 KRX Open API 인증키가 필요합니다. "
+                               "설정 화면의 'KRX Open API 키'에 넣어 주세요.")
+        got = krx_open.download(self.ws.root, key, kr_dataset.latest_day(today), start=max(start, krx_open.FIRST_DAY),
+                                say=say, today=today)
+        left = max(len(v) for v in krx_open.missing_sessions(self.ws.root, start, kr_dataset.latest_day(today)).values())
+        if left > kr_dataset.MAX_MISSING_SHARE * 4000:
+            raise RuntimeError(f"한국거래소 자료를 아직 {left}거래일치 더 받아야 합니다"
+                               f"{' (하루 호출 한도)' if got['stopped'] else ''}. 다음 실행 때 이어서 받습니다.")
+        version, manifest = kr_dataset.build(self.data, base_version, self.ws.root, start, say)
+        if manifest["qc_fatal"]:
+            say("품질 검사 치명 항목이 있습니다. 결과는 INVALID로 처리됩니다.")
+        return version
+
     def ensure_spec_dataset(self, loaded: LoadedSpec, policy: dict, say=None, today: str | None = None) -> str:
         symbols, start = loaded.spec["universe"]["symbols"], policy["splits"]["train"][0]
         base = self.ensure_dataset(symbols, start, say)
+        if loaded.spec["universe"].get("index") == "KRTOP300":
+            return self.ensure_kr_dataset(base, start, say)
         if "index" in loaded.spec["universe"]:
             return self.ensure_index_dataset(base, start, say, today=today, facts="value" in loaded.spec["rules"])
         return base

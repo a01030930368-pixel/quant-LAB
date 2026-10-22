@@ -209,6 +209,8 @@ class HomePage(Page):
         self.body.addWidget(self.progress)
         self.key_card = self._key_card()
         self.body.addWidget(self.key_card)
+        self.krx_card = self._krx_card()
+        self.body.addWidget(self.krx_card)
 
         row = QHBoxLayout()
         row.setSpacing(12)
@@ -301,6 +303,28 @@ class HomePage(Page):
         c.lay.addLayout(row)
         return c
 
+    def _krx_card(self) -> Card:
+        c = Card(12, 8)
+        c.lay.addLayout(pane_header("한국 주식 자료 연결"))
+        c.lay.addWidget(label("한국 주식 자동 탐색(공장 3차)은 한국거래소 KRX Open API 인증키가 있어야 해요. "
+                              "openapi.krx.co.kr에서 받은 키를 넣어 주세요. 키는 Windows 자격 증명 관리자에만 저장돼요.",
+                              "body2", wrap=True))
+        row = QHBoxLayout()
+        self.krx_key = QLineEdit()
+        self.krx_key.setEchoMode(QLineEdit.Password)
+        self.krx_key.setPlaceholderText("KRX 인증키 붙여넣기")
+        row.addWidget(self.krx_key, 1)
+        row.addWidget(button("저장", "primary", self.save_krx_key))
+        c.lay.addLayout(row)
+        return c
+
+    def save_krx_key(self):
+        k = self.krx_key.text().strip()
+        if k:
+            self.lab.set_api_key(k, "krx")
+            self.krx_key.clear()
+            self.refresh()
+
     def save_key(self):
         k = self.key.text().strip()
         if k:
@@ -321,6 +345,7 @@ class HomePage(Page):
     # strategy table -------------------------------------------------------------
     def refresh(self):
         self.key_card.setVisible(not self.lab.has_api_key())
+        self.krx_card.setVisible(not self.lab.has_krx_key())
         history = self.lab.registry.history()
         formal = [e for e in history if e["kind"] == "formal"]
         self.paths = list(self.lab.strategy_files())

@@ -102,7 +102,8 @@ def build_report(lab, experiment_id: str) -> tuple[str, dict]:
     S[4] = [f"- TRAIN {sp.get('train')}, VALIDATION {sp.get('validation')}, FINAL HOLDOUT {sp.get('holdout')}",
             f"- 이 실험이 사용한 구간: {'TRAIN~HOLDOUT (보류 구간 1회 열람)' if formal and 'holdout' in m else m.get('window', 'TRAIN+VALIDATION')}"]
     c = policy.get("costs", {})
-    S[5] = [f"- 편도 수수료 {c.get('commission_bps')}bp, 슬리피지 {c.get('slippage_bps')}bp, 고정 수수료 {c.get('fixed_fee')}",
+    S[5] = [f"- 편도 수수료 {c.get('commission_bps')}bp, 슬리피지 {c.get('slippage_bps')}bp, 고정 수수료 {c.get('fixed_fee')}"
+            + (f", 매도 거래세 {c['sell_tax_bps']}bp" if c.get("sell_tax_bps") else ""),
             "- 신호: 장 마감 가격으로 판단 → 다음 거래일 시가 체결(같은 종가 체결 없음), 매도 먼저 후 매수, 정수 주식, 현금 한도 내",
             f"- 판정 설정: `{policy.get('policy_id')}` v{policy.get('version')} (해시 `{(e.get('validation_policy_version') or '')[:12]}`)"]
     perf_src = m.get("holdout") or m.get("dev") or m

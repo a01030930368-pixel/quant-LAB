@@ -187,6 +187,15 @@ class DataScreen(Screen):
         kl.addWidget(self.button("저장", self.save_key))
         lay.addWidget(key)
 
+        krx = QGroupBox("KRX Open API 인증키 (한국 주식, openapi.krx.co.kr)")
+        xl = QHBoxLayout(krx)
+        self.krx_key = QLineEdit()
+        self.krx_key.setEchoMode(QLineEdit.Password)
+        self.krx_key.setPlaceholderText("키를 붙여넣고 저장 (Windows 자격 증명 관리자에 보관)")
+        xl.addWidget(self.krx_key)
+        xl.addWidget(self.button("저장", self.save_krx_key))
+        lay.addWidget(krx)
+
         fetch = QGroupBox("가격 내려받기 (일봉, 원가격 + 배당·분할)")
         fl = QHBoxLayout(fetch)
         self.symbols = QLineEdit("SPY BIL")
@@ -239,6 +248,13 @@ class DataScreen(Screen):
         self.lab.set_api_key(k)
         self.key.clear()
         self.win.status("API 키를 저장했습니다.")
+
+    def save_krx_key(self):
+        k = self.krx_key.text().strip()
+        if k:
+            self.lab.set_api_key(k, "krx")
+            self.krx_key.clear()
+            self.win.status("KRX 인증키를 저장했습니다.")
 
     def save_sec_email(self):
         try:
