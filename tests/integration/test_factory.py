@@ -254,10 +254,10 @@ def test_factory_reports_once_when_the_grid_is_done(tmp_path, monkeypatch):
         monkeypatch.setattr(lab, "auto_search", lambda: FakeAuto())
         monkeypatch.setattr(F, "low_priority", lambda: None)
         assert f.run() == "finished"
-        # round 1 then round 2, one log row each; later starts do nothing
-        assert f.finished() and f.run() == "finished" and len(f.log()) == 2
+        # rounds 1, 2 and 3, one log row each; later starts do nothing
+        assert f.finished() and f.run() == "finished" and len(f.log()) == 3
         news = f.unseen()
-        assert [n["kind"] for n in news] == ["finished", "finished"]
+        assert [n["kind"] for n in news] == ["finished", "finished", "finished"]
         assert "10개" in F.report_text(news[0]) and "이어서 2차" in F.report_text(news[0])
         done = json.loads(f.path("finished.json").read_text(encoding="utf-8"))
         assert all(done[g]["strategy_hash"] == "hash-1" for g in F.GROUPS)
@@ -442,12 +442,14 @@ def test_factory_runs_round_2_after_round_1_and_reports_each(tmp_path, monkeypat
         monkeypatch.setattr(lab, "auto_search", lambda: FakeAuto())
         monkeypatch.setattr(F, "low_priority", lambda: None)
         assert f.current() == "AUTO-SP500X"
-        assert f.run() == "finished" and ran == ["AUTO-SP500X", "AUTO-SP500Y"]
+        assert f.run() == "finished" and ran == ["AUTO-SP500X", "AUTO-SP500Y", "AUTO-KRSTK"]
         news = f.unseen()
-        assert [(n["group"], n["next"]) for n in news] == [("AUTO-SP500X", "AUTO-SP500Y"), ("AUTO-SP500Y", None)]
+        assert [(n["group"], n["next"]) for n in news] == [("AUTO-SP500X", "AUTO-SP500Y"), ("AUTO-SP500Y", "AUTO-KRSTK"),
+                                                           ("AUTO-KRSTK", None)]
         assert "1차가" in F.report_text(news[0]) and "2차를 시작" in F.report_text(news[0])
-        assert "새 재료가 들어올 때까지" in F.report_text(news[1])
-        assert [x["group"] for x in f.log()] == ["AUTO-SP500X", "AUTO-SP500Y"]
+        assert "3차를 시작" in F.report_text(news[1])
+        assert "새 재료가 들어올 때까지" in F.report_text(news[2])
+        assert [x["group"] for x in f.log()] == ["AUTO-SP500X", "AUTO-SP500Y", "AUTO-KRSTK"]
         assert f.progress()["finished"]
     finally:
         lab.close()

@@ -67,6 +67,8 @@ def _cfg(policy: dict, cost_multiplier: float = 1.0) -> BacktestConfig:
     c = dict(policy["costs"])
     c["commission_bps"] = float(c["commission_bps"]) * cost_multiplier
     c["slippage_bps"] = float(c["slippage_bps"]) * cost_multiplier
+    if "tax_exempt" in c:  # the tax is set by law: not scaled
+        c["tax_exempt"] = tuple(str(x) for x in c["tax_exempt"])
     return BacktestConfig(initial_cash=float(policy["initial_cash"]), costs=CostModel(**c))
 
 

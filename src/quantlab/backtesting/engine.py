@@ -10,7 +10,9 @@ Timeline of one trading day t (protocol 제8조: observe → signal → order �
              weights; resulting orders wait for the NEXT open
 
 Fill price = open * (1 ± slippage). Commission = |notional| * commission_bps
-+ fixed fee. Nothing here can make a fill better than the open price.
++ fixed fee, plus |notional| * sell_tax_bps on sales (Korea's securities transaction tax, D-038) of
+symbols not in tax_exempt (ETFs).
+Nothing here can make a fill better than the open price.
 """
 
 from __future__ import annotations
@@ -33,13 +35,17 @@ class CostModel:
     commission_bps: float = 0.0
     slippage_bps: float = 5.0
     fixed_fee: float = 0.0
+    sell_tax_bps: float = 0.0
+    tax_exempt: tuple = ()
 
     def fill_price(self, open_px: float, qty: float) -> float:
         side = 1.0 if qty > 0 else -1.0
         return open_px * (1.0 + side * self.slippage_bps * BPS)
 
-    def commission(self, notional: float) -> float:
-        return abs(notional) * self.commission_bps * BPS + (self.fixed_fee if notional else 0.0)
+    def commission(self, notional: float, symbol: str | None = None) -> float:
+        taxed = notional < 0 and symbol not in self.tax_exempt
+        tax = abs(notional) * self.sell_tax_bps * BPS if taxed else 0.0
+        return abs(notional) * self.commission_bps * BPS + tax + (self.fixed_fee if notional else 0.0)
 
 
 @dataclass(frozen=True)
@@ -144,7 +150,7 @@ def run_backtest(strategy: Strategy, data: MarketData, config: BacktestConfig | 
                     continue
                 px = costs.fill_price(px_open, qty)
                 notional = qty * px
-                comm = costs.commission(notional)
+                comm = costs.commission(notional, syms[i])
                 cash -= notional + comm
                 shares[i] += qty
                 slip_cost = abs(qty) * abs(px - px_open)

@@ -36,9 +36,11 @@ import pandas as pd
 
 from quantlab.strategies.base import MarketView, PartialWeights, Strategy
 
-CATALOGS = (1, 2, 3, 4)  # 2 adds 5 slots (D-029); 3 conditions and exits (D-033); 4 index changes, insider sales,
-                        # the weeks before earnings (D-034); older ones keep their meaning
+CATALOGS = (1, 2, 3, 4, 5)  # 2 adds 5 slots (D-029); 3 conditions and exits (D-033); 4 index changes, insider sales,
+                           # the weeks before earnings (D-034); 5 Korean stocks (D-038); older ones keep their meaning
 BENCHMARK = "SPY"
+KR_BENCHMARK = "069500"     # KODEX 200: market filters and trade comparison of catalog 5
+KR_LIMIT_CHANGE = pd.Timestamp("2015-06-15")  # KRX daily price limit ±15% before, ±30% from this day
 PARAMS = ("entry", "hold", "stop", "take", "slots")
 KEYS = ("catalog", "park", "park_band")
 ORDER_SEED = 20261016
@@ -88,22 +90,41 @@ _CONDITIONS: dict[str, tuple[str, str, int]] = {
     "inssell3": ("임원·이사 3명 이상이 10만 달러 이상 매도 (30일)", "sell", 4),
     "nosell": ("임원·이사 매도 없음 (90일)", "sell", 4),
     "preearn": ("지난 실적 발표 후 80~88일 (다음 발표 1~2주 전)", "pre", 4),
+    "mkt_up200": ("KODEX 200이 200일선 위", "mkt", 5),
+    "mkt_down200": ("KODEX 200이 200일선 아래", "mkt", 5),
+    "mkt_drop5": ("KODEX 200 5일 수익률 -5% 이하", "mkt", 5),
+    "uplimit": ("상한가 마감 (가격제한폭까지 상승)", "limit", 5),
+    "dnlimit": ("하한가 마감 (가격제한폭까지 하락)", "limit", 5),
 }
+# catalog 5 (Korean stocks, no filings yet): the price items of catalog 3 without the SPY ones, and its own
+KR_FROM_CATALOG3 = ("drop", "rsi", "gap", "trend", "high", "drop1", "drop20", "streak", "vol")
 CONDITIONS: dict[str, tuple[str, str]] = {k: v[:2] for k, v in _CONDITIONS.items()}
 GROUPS = ("earn", "ins", "drop", "rsi", "gap", "trend", "spy", "high", "drop1", "drop20", "streak", "vol",
-          "index", "sell", "pre")
+          "index", "sell", "pre", "mkt", "limit")
 # adjacent thresholds of the same measure (neighbours); rsi and trend items are different measures
 LADDERS = (("earn3", "earn5", "earn8"), ("earnneg5", "earnneg8"), ("ins1", "ins2"), ("drop5", "drop10"),
            ("gap3", "gap5"), ("gapdn3", "gapdn5"), ("drop1_4", "drop1_7"), ("dn3", "dn5"))
-_HOLDS = {1: (5, 10, 20, 30, 60), 2: (5, 10, 20, 30, 60), 3: (3, 5, 10, 20, 30, 60), 4: (3, 5, 10, 20, 30, 60)}
-_STOPS = {1: (0, 0.1, 0.2), 2: (0, 0.1, 0.2), 3: (0, 0.1, 0.2), 4: (0, 0.1, 0.2)}
-_TAKES = {1: (0, 0.1, 0.2), 2: (0, 0.1, 0.2), 3: (0, 0.1, 0.2), 4: (0, 0.1, 0.2)}
+_HOLDS = {1: (5, 10, 20, 30, 60), 2: (5, 10, 20, 30, 60), 3: (3, 5, 10, 20, 30, 60), 4: (3, 5, 10, 20, 30, 60),
+          5: (3, 5, 10, 20, 30, 60)}
+_STOPS = {1: (0, 0.1, 0.2), 2: (0, 0.1, 0.2), 3: (0, 0.1, 0.2), 4: (0, 0.1, 0.2), 5: (0, 0.1, 0.2)}
+_TAKES = {1: (0, 0.1, 0.2), 2: (0, 0.1, 0.2), 3: (0, 0.1, 0.2), 4: (0, 0.1, 0.2), 5: (0, 0.1, 0.2)}
 HOLDS, STOPS, TAKES = _HOLDS[1], _STOPS[1], _TAKES[1]
-SLOTS = {1: (10, 20), 2: (5, 10, 20), 3: (5, 10, 20), 4: (5, 10, 20)}
+SLOTS = {1: (10, 20), 2: (5, 10, 20), 3: (5, 10, 20), 4: (5, 10, 20), 5: (5, 10, 20)}
+
+
+def _in_catalog(key: str, catalog: int) -> bool:
+    _, group, since = _CONDITIONS[key]
+    if catalog == 5:
+        return since == 5 or (since <= 3 and group in KR_FROM_CATALOG3)
+    return since <= catalog and since < 5
 
 
 def conditions(catalog: int = 1) -> list[str]:
-    return [k for k, v in _CONDITIONS.items() if v[2] <= catalog]
+    return [k for k in _CONDITIONS if _in_catalog(k, catalog)]
+
+
+def benchmark(catalog: int) -> str:
+    return KR_BENCHMARK if catalog == 5 else BENCHMARK
 
 
 def entries(catalog: int = 1) -> list[str]:
@@ -126,7 +147,7 @@ def already_tried(params: dict, catalog: int) -> bool:
     """A combination an earlier search ran (its trials are counted as prior trials), so the newer search
     skips it instead of running it twice: in catalog 3, one made only of catalog-1 items and exits
     (AUTO-SP500); in catalog 4, one made only of catalog-3 items and exits (AUTO-SP500 and AUTO-SP500X)."""
-    if catalog < 3:
+    if catalog < 3 or catalog == 5:  # catalog 5 is a new market
         return False
     prev = 1 if catalog == 3 else 3
     return (all(_CONDITIONS[c][2] <= prev for c in str(params["entry"]).split("+"))
@@ -152,8 +173,9 @@ def validate_stock_combo(cfg: Any, symbols: list[str]) -> list[str]:
     v = cfg.get("park_band", 1)
     if not isinstance(v, int) or isinstance(v, bool) or v < 1:
         errs.append("rules.stock_combo.park_band must be a whole number >= 1")
-    if BENCHMARK not in symbols:
-        errs.append(f"stock_combo rules read {BENCHMARK} (earnings reaction, market trend): add it to universe.symbols")
+    bench = benchmark(cfg.get("catalog", 1)) if cfg.get("catalog") in CATALOGS else BENCHMARK
+    if bench not in symbols:
+        errs.append(f"stock_combo rules read {bench} (earnings reaction, market trend): add it to universe.symbols")
     return errs
 
 
@@ -241,7 +263,7 @@ def build_panels(data) -> dict:
     C = np.full((T, N), np.nan)
     for j, s in enumerate(syms):
         O[:, j], C[:, j] = _adjusted(data.values(s))
-    _, spy = _adjusted(data.values(BENCHMARK))
+    _, spy = _adjusted(data.values(BENCHMARK if BENCHMARK in data.frames else KR_BENCHMARK))
     col = {s: j for j, s in enumerate(syms)}
     cdf = pd.DataFrame(C)
 
@@ -284,6 +306,10 @@ def build_panels(data) -> dict:
     p["up200"], p["down200"] = C > sma200, C < sma200
     p["high252"] = np.isfinite(high252) & (C >= high252)
     p["spy_up200"] = np.repeat(spy_up[:, None], N, axis=1)
+    # catalog 5: the KODEX 200 filters (the same tables as the SPY ones of a Korean dataset) and price limits
+    p["mkt_up200"], p["mkt_down200"], p["mkt_drop5"] = p["spy_up200"], p["spy_down200"], p["spy_drop5"]
+    limit = np.where(cal < KR_LIMIT_CHANGE, 0.15, 0.30)[:, None] - 0.01
+    p["uplimit"], p["dnlimit"] = ret1 >= limit, ret1 <= -limit
     rsi14 = _wilder_rsi(C, 14)
     rsi2 = _wilder_rsi(C, 2)
     p["rsi14_30"], p["rsi2_10"] = rsi14 < 30, rsi2 < 10
@@ -403,7 +429,8 @@ class StockComboStrategy(Strategy):
         self.hold, self.slots = int(params["hold"]), int(params["slots"])
         self.stop, self.take = float(params["stop"] or 0), float(params["take"] or 0)
         self.park_symbol = self.cfg.get("park")  # idle equity, not a trade of the rule
-        self.excess_benchmark = BENCHMARK       # each trade is also compared with SPY held for the same days
+        self.excess_benchmark = benchmark(catalog_of(self.cfg))  # each trade is also compared with the market
+                                                                # (SPY; KODEX 200 in catalog 5) for the same days
         self.held: dict[int, list] = {}         # column -> [sessions since signal, entry open or None]
         self.park_w: float | None = None
 

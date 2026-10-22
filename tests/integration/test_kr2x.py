@@ -94,7 +94,7 @@ def test_spy_market_filters_need_spy_only_when_listed():
     assert any("SPY" in e for e in combo.validate_params(params, 2, ["122630", "069500"]))
     params["filter"]["search"] = [f for f in space["filter"] if not f.startswith("spy_")]
     assert combo.validate_params(params, 2, ["122630", "069500"]) == []
-    assert A.GROUPS[-1] == "AUTO-KR2X"
+    assert "AUTO-KR2X" in A.GROUPS
 
 
 def test_unadjusted_split_becomes_a_split_factor(monkeypatch):

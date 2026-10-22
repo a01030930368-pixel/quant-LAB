@@ -34,7 +34,7 @@ from quantlab.strategies.base import MarketView, PartialWeights, Strategy
 ROLES = ("officer", "director")
 KEYS = ("roles", "min_value", "min_insiders", "window_days", "hold_days", "slots", "park")
 OPTIONAL = ("park_band",)
-INDEXES = ("SP500",)
+INDEXES = ("SP500", "KRTOP300")  # KRTOP300: Korean stocks (D-038), stock_combo catalog 5 only
 
 
 def validate_insider(cfg: Any, symbols: list[str]) -> list[str]:
