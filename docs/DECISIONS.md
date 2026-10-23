@@ -548,3 +548,15 @@ gross per trade, but SPY gained +0.88% over the same 20 sessions (excess +0.23%,
   KOSPI's path already seen through KORU and the KRX 2x ETFs disclosed.
 - The factory runs AUTO-KRSTK as round 3 after the two S&P 500 rounds; without a KRX key it stops with a
   message on the factory page.
+
+## D-039 · 2026-10-24 · One pre-fixed near miss may read the Korean stock holdout
+AUTO-KRSTK tried all 276,210 combinations (23.7 hours on the user's PC) with no candidate: the t threshold
+was 5.09 and the best t 3.69. The near misses with the highest t share one theme across every slot,
+stop and take setting: a stock above its 200-day average falls to RSI(14) below 30 while KODEX 200 is
+below its own 200-day average, held 5 sessions (t 3.3-3.7, about 150 trades in 2010-2019).
+- The user chose (2026-10-24 KST) to spend the KRTOP300 holdout (2020+) on one rule fixed before it is read.
+- The rule is the theme in its simplest form, not the best row: no stop and no take, and the middle slot
+  count: `rsi14_30 + up200 + mkt_down200 · hold 5 · 10 slots` (dev: CAGR 12.5%, MDD -17.9%, 153 trades,
+  t 3.65). It is `PREREGISTERED["AUTO-KRSTK"]` and must not change.
+- As D-024: not a candidate; the final evaluation runs under auto_krstk_v1 with the family's 276,210
+  trials, read as a check of the theme. After it the group cannot read the holdout again.

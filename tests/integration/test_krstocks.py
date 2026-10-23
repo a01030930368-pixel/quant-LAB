@@ -216,6 +216,19 @@ def test_round_3_downloads_builds_and_searches_korean_stocks(kr_lab):
     assert set(res.trades["symbol"]) - {"069500"} <= set(manifest["names"])
 
 
+def test_the_preregistered_rule_reads_the_holdout_once(kr_lab):
+    """D-039: the pre-fixed round 3 rule is in the grid and is the one near miss allowed a final evaluation."""
+    from quantlab.services import autosearch as A
+
+    p = A.PREREGISTERED["AUTO-KRSTK"]
+    space = sc.full_space(5)
+    assert set(p) == set(space) and all(p[k] in space[k] for k in space)
+    auto = kr_lab.auto_search()
+    out = auto.final_evaluation("AUTO-KRSTK", p)
+    assert out.gates and auto.holdout_reads("AUTO-KRSTK") == 1
+    assert kr_lab.registry.holdout_ledger()[-1]["strategy_family"] == "AUTO-KRSTK"
+
+
 def test_krx_key_is_asked_for_before_any_download(tmp_path, monkeypatch):
     monkeypatch.setattr(providers, "get_api_key", lambda provider="tiingo": None)
     lab = Lab(tmp_path / "QL")
