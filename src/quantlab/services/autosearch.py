@@ -71,6 +71,8 @@ SPY_SHARPE_LABEL = "SPY 보유보다 낮은 샤프 (위험 대비 수익)"
 # evaluation although it is not a candidate. Fixed before the holdout was read; never change it.
 PREREGISTERED = {
     "AUTO-LEVP": {"entry": "ret5_15", "exit": "rsi2_70", "filter": "down200", "max_hold": 5, "stop": 0.2, "take": 0.1},
+    # D-039: the theme of round 3's near misses in its simplest form, fixed 2026-10-24 before 2020+ was read
+    "AUTO-KRSTK": {"entry": "rsi14_30+up200+mkt_down200", "hold": 5, "slots": 10, "stop": 0, "take": 0},
 }
 PREREGISTERED_LABEL = "사전 고정 (최종 평가 가능)"
 
