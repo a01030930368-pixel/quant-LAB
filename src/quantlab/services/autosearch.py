@@ -43,14 +43,16 @@ from quantlab.validation import metrics as M
 from quantlab.validation.engine import BuyAndHold, _cfg, _rf, dev_data
 
 GROUPS = ("AUTO-DEVA", "AUTO-DEVB", "AUTO-EM", "AUTO-REAL", "AUTO-LEV", "AUTO-LEVP", "AUTO-SP500", "AUTO-SP500X",
-          "AUTO-SP500Y", "AUTO-KR2X", "AUTO-KRSTK")
+          "AUTO-SP500Y", "AUTO-KR2X", "AUTO-KRSTK", "AUTO-KRDART")
 # groups that trade the same ETFs share one holdout: only one final evaluation across them
 SHARED_HOLDOUT = {"AUTO-LEV": ("AUTO-LEV", "AUTO-LEVP"), "AUTO-LEVP": ("AUTO-LEV", "AUTO-LEVP"),
                   # the pre-fixed rule taken from this search's near misses (D-029) reads the same holdout
                   "AUTO-SP500": ("AUTO-SP500", "GAP-EARN-SP500", "AUTO-SP500X", "AUTO-SP500Y"),
                   # the research factory searches the same stocks after that holdout was read (D-033, D-034)
                   "AUTO-SP500X": ("AUTO-SP500", "GAP-EARN-SP500", "AUTO-SP500X", "AUTO-SP500Y"),
-                  "AUTO-SP500Y": ("AUTO-SP500", "GAP-EARN-SP500", "AUTO-SP500X", "AUTO-SP500Y")}
+                  "AUTO-SP500Y": ("AUTO-SP500", "GAP-EARN-SP500", "AUTO-SP500X", "AUTO-SP500Y"),
+                  # Korean filings search the same stocks after the KRTOP300 holdout was read (D-039, D-040)
+                  "AUTO-KRSTK": ("AUTO-KRSTK", "AUTO-KRDART"), "AUTO-KRDART": ("AUTO-KRSTK", "AUTO-KRDART")}
 
 # filter code -> Korean label, in the order they are checked
 FILTERS = [

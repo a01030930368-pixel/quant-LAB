@@ -36,8 +36,9 @@ import pandas as pd
 
 from quantlab.strategies.base import MarketView, PartialWeights, Strategy
 
-CATALOGS = (1, 2, 3, 4, 5)  # 2 adds 5 slots (D-029); 3 conditions and exits (D-033); 4 index changes, insider sales,
-                           # the weeks before earnings (D-034); 5 Korean stocks (D-038); older ones keep their meaning
+CATALOGS = (1, 2, 3, 4, 5, 6)  # 2 adds 5 slots (D-029); 3 conditions and exits (D-033); 4 index changes, insider
+                              # sales, the weeks before earnings (D-034); 5 Korean stocks (D-038); 6 Korean filings
+                              # (D-040); older ones keep their meaning
 BENCHMARK = "SPY"
 KR_BENCHMARK = "069500"     # KODEX 200: market filters and trade comparison of catalog 5
 KR_LIMIT_CHANGE = pd.Timestamp("2015-06-15")  # KRX daily price limit ±15% before, ±30% from this day
@@ -52,6 +53,11 @@ SELL_BIG_VALUE = 100_000     # catalog 4: a sale counts toward "3 insiders selli
 NOSELL_DAYS = 90             # catalog 4: no officer or director sale (>= INSIDER_MIN_VALUE) in this many days
 INDEX_CHANGE_SESSIONS = 20   # catalog 4: joined or left the index within this many sessions
 PRE_EARN_DAYS = (80, 88)     # catalog 4: calendar days since the last earnings filing (next one ~91 days on)
+KR_INS_MIN_VALUE = 10_000_000    # catalog 6: won; a report counts from this change in holding
+KR_INS_BIG_VALUE = 300_000_000   # catalog 6: one executive or major shareholder adding at least this much
+KR_SELL_BIG_VALUE = 100_000_000  # catalog 6: a decrease counts toward "3 selling" from this size
+KR_BUYBACK_DAYS = 14             # catalog 6: calendar days a buyback decision counts (about 10 sessions)
+KR_BUYBACK_BIG = 0.01            # catalog 6: planned amount / market value
 
 # key -> (Korean label, group, first catalog); groups in this order, items in a group from mild to strict.
 # A later catalog only adds items, so a catalog's list is the items with `since <= catalog`, in order.
@@ -95,27 +101,35 @@ _CONDITIONS: dict[str, tuple[str, str, int]] = {
     "mkt_drop5": ("KODEX 200 5일 수익률 -5% 이하", "mkt", 5),
     "uplimit": ("상한가 마감 (가격제한폭까지 상승)", "limit", 5),
     "dnlimit": ("하한가 마감 (가격제한폭까지 하락)", "limit", 5),
+    "kins1": ("임원·주요주주 1명 이상 지분 증가 보고 (30일)", "kins", 6),
+    "kins2": ("임원·주요주주 2명 이상 지분 증가 보고 (30일)", "kins", 6),
+    "kinsbig": ("임원·주요주주 한 명이 3억 원 이상 지분 증가 (30일)", "kins", 6),
+    "ksell3": ("임원·주요주주 3명 이상이 1억 원 이상 지분 감소 (30일)", "ksell", 6),
+    "knosell": ("임원·주요주주 지분 감소 보고 없음 (90일)", "ksell", 6),
+    "bb": ("자기주식 취득 결정 또는 신탁 계약 (2주)", "bb", 6),
+    "bb1": ("자기주식 취득 예정 금액이 시가총액 1% 이상 (2주)", "bb", 6),
 }
 # catalog 5 (Korean stocks, no filings yet): the price items of catalog 3 without the SPY ones, and its own
 KR_FROM_CATALOG3 = ("drop", "rsi", "gap", "trend", "high", "drop1", "drop20", "streak", "vol")
 CONDITIONS: dict[str, tuple[str, str]] = {k: v[:2] for k, v in _CONDITIONS.items()}
 GROUPS = ("earn", "ins", "drop", "rsi", "gap", "trend", "spy", "high", "drop1", "drop20", "streak", "vol",
-          "index", "sell", "pre", "mkt", "limit")
+          "index", "sell", "pre", "mkt", "limit", "kins", "ksell", "bb")
 # adjacent thresholds of the same measure (neighbours); rsi and trend items are different measures
 LADDERS = (("earn3", "earn5", "earn8"), ("earnneg5", "earnneg8"), ("ins1", "ins2"), ("drop5", "drop10"),
-           ("gap3", "gap5"), ("gapdn3", "gapdn5"), ("drop1_4", "drop1_7"), ("dn3", "dn5"))
+           ("gap3", "gap5"), ("gapdn3", "gapdn5"), ("drop1_4", "drop1_7"), ("dn3", "dn5"), ("kins1", "kins2"))
 _HOLDS = {1: (5, 10, 20, 30, 60), 2: (5, 10, 20, 30, 60), 3: (3, 5, 10, 20, 30, 60), 4: (3, 5, 10, 20, 30, 60),
-          5: (3, 5, 10, 20, 30, 60)}
-_STOPS = {1: (0, 0.1, 0.2), 2: (0, 0.1, 0.2), 3: (0, 0.1, 0.2), 4: (0, 0.1, 0.2), 5: (0, 0.1, 0.2)}
-_TAKES = {1: (0, 0.1, 0.2), 2: (0, 0.1, 0.2), 3: (0, 0.1, 0.2), 4: (0, 0.1, 0.2), 5: (0, 0.1, 0.2)}
+          5: (3, 5, 10, 20, 30, 60), 6: (3, 5, 10, 20, 30, 60)}
+_STOPS = {1: (0, 0.1, 0.2), 2: (0, 0.1, 0.2), 3: (0, 0.1, 0.2), 4: (0, 0.1, 0.2), 5: (0, 0.1, 0.2), 6: (0, 0.1, 0.2)}
+_TAKES = {1: (0, 0.1, 0.2), 2: (0, 0.1, 0.2), 3: (0, 0.1, 0.2), 4: (0, 0.1, 0.2), 5: (0, 0.1, 0.2), 6: (0, 0.1, 0.2)}
 HOLDS, STOPS, TAKES = _HOLDS[1], _STOPS[1], _TAKES[1]
-SLOTS = {1: (10, 20), 2: (5, 10, 20), 3: (5, 10, 20), 4: (5, 10, 20), 5: (5, 10, 20)}
+SLOTS = {1: (10, 20), 2: (5, 10, 20), 3: (5, 10, 20), 4: (5, 10, 20), 5: (5, 10, 20), 6: (5, 10, 20)}
+KR_CATALOGS = (5, 6)
 
 
 def _in_catalog(key: str, catalog: int) -> bool:
     _, group, since = _CONDITIONS[key]
-    if catalog == 5:
-        return since == 5 or (since <= 3 and group in KR_FROM_CATALOG3)
+    if catalog in KR_CATALOGS:
+        return since in KR_CATALOGS and since <= catalog or (since <= 3 and group in KR_FROM_CATALOG3)
     return since <= catalog and since < 5
 
 
@@ -124,7 +138,7 @@ def conditions(catalog: int = 1) -> list[str]:
 
 
 def benchmark(catalog: int) -> str:
-    return KR_BENCHMARK if catalog == 5 else BENCHMARK
+    return KR_BENCHMARK if catalog in KR_CATALOGS else BENCHMARK
 
 
 def entries(catalog: int = 1) -> list[str]:
@@ -146,9 +160,14 @@ def full_space(catalog: int = 1) -> dict[str, list]:
 def already_tried(params: dict, catalog: int) -> bool:
     """A combination an earlier search ran (its trials are counted as prior trials), so the newer search
     skips it instead of running it twice: in catalog 3, one made only of catalog-1 items and exits
-    (AUTO-SP500); in catalog 4, one made only of catalog-3 items and exits (AUTO-SP500 and AUTO-SP500X)."""
+    (AUTO-SP500); in catalog 4, one made only of catalog-3 items and exits (AUTO-SP500 and AUTO-SP500X);
+    in catalog 6, one made only of catalog-5 items and exits (AUTO-KRSTK)."""
     if catalog < 3 or catalog == 5:  # catalog 5 is a new market
         return False
+    if catalog == 6:
+        return (all(_in_catalog(c, 5) for c in str(params["entry"]).split("+"))
+                and params["hold"] in _HOLDS[5] and params["stop"] in _STOPS[5] and params["take"] in _TAKES[5]
+                and params["slots"] in SLOTS[5])
     prev = 1 if catalog == 3 else 3
     return (all(_CONDITIONS[c][2] <= prev for c in str(params["entry"]).split("+"))
             and params["hold"] in _HOLDS[prev] and params["stop"] in _STOPS[prev] and params["take"] in _TAKES[prev]
@@ -348,6 +367,16 @@ def build_panels(data) -> dict:
     p["inssell3"] = _insider_counts(ev, known_all, cal64, col, T, N, SELL_BIG_VALUE, kind="insider_sell") >= 3
     p["nosell"] = _insider_counts(ev, known_all, cal64, col, T, N, INSIDER_MIN_VALUE, kind="insider_sell",
                                   days=NOSELL_DAYS) == 0
+    # catalog 6: Korean filings (OpenDART): executives' and major shareholders' holdings, buyback decisions
+    n_kr = _insider_counts(ev, known_all, cal64, col, T, N, KR_INS_MIN_VALUE, kind="kr_ins_buy")
+    p["kins1"], p["kins2"] = n_kr >= 1, n_kr >= 2
+    p["kinsbig"] = _insider_counts(ev, known_all, cal64, col, T, N, KR_INS_BIG_VALUE, kind="kr_ins_buy") >= 1
+    p["ksell3"] = _insider_counts(ev, known_all, cal64, col, T, N, KR_SELL_BIG_VALUE, kind="kr_ins_sell") >= 3
+    p["knosell"] = _insider_counts(ev, known_all, cal64, col, T, N, KR_INS_MIN_VALUE, kind="kr_ins_sell",
+                                   days=NOSELL_DAYS) == 0
+    p["bb"] = _insider_counts(ev, known_all, cal64, col, T, N, 0.0, kind="kr_buyback", days=KR_BUYBACK_DAYS) >= 1
+    p["bb1"] = _insider_counts(ev, known_all, cal64, col, T, N, KR_BUYBACK_BIG, kind="kr_buyback",
+                               days=KR_BUYBACK_DAYS) >= 1
     last_earn = np.full((T, N), np.datetime64("NaT", "ns"), dtype="datetime64[ns]")
     if len(ev) and "kind" in ev:
         for k in np.flatnonzero((ev["kind"] == "earnings").to_numpy()):

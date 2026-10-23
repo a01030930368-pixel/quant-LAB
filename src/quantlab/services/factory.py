@@ -7,7 +7,8 @@ on the next start). It lowers its own priority, so the user's other programs com
 and runs the search 3,000 combinations at a time until the whole grid is tried, the user switches
 the factory off, or the PC shuts down. It never needs Claude and never reads the holdout (the
 search sees TRAIN+VALIDATION only; the 2020+ holdout of the S&P 500 stocks was spent by GAP-EARN-SP500).
-Round 3 (AUTO-KRSTK, D-038) searches Korean stocks; it needs the user's KRX Open API key.
+Round 3 (AUTO-KRSTK, D-038) searches Korean stocks; it needs the user's KRX Open API key. Round 4
+(AUTO-KRDART, D-040) adds Korean filings; it also needs the user's OpenDART key.
 
 Kept in <work folder>/factory/:
 
@@ -29,7 +30,8 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-GROUPS = ("AUTO-SP500X", "AUTO-SP500Y", "AUTO-KRSTK")  # searched in this order, each to the end (D-033, D-034, D-038)
+GROUPS = ("AUTO-SP500X", "AUTO-SP500Y", "AUTO-KRSTK", "AUTO-KRDART")  # searched in this order, each to the end
+                                                                       # (D-033, D-034, D-038, D-040)
 GROUP = GROUPS[0]                       # files written before D-034 belong to this one
 KST = timezone(timedelta(hours=9))
 ROUND = {g: f"{i + 1}차" for i, g in enumerate(GROUPS)}

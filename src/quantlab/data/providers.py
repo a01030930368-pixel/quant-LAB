@@ -88,6 +88,10 @@ def fetch_tiingo(symbol: str, start: str, end: str | None = None, api_key: str |
 # --- Naver Finance (KRX) ----------------------------------------------------------
 # Korean listings are 6-character codes (e.g. 122630 KODEX 레버리지); Tiingo does not carry them.
 NAVER_URL = "https://fchart.stock.naver.com/sise.nhn"
+# The chart above returns at most NAVER_CAP sessions however many are asked for (seen 2026-10-23: KODEX 200
+# from 2014-07-30 only); older sessions come from the dated price list below (D-040).
+NAVER_CAP = 3000
+NAVER_RANGE_URL = "https://api.finance.naver.com/siseJson.naver"
 KRX_NAMES = {"069500": "KODEX 200", "122630": "KODEX 레버리지", "233740": "KODEX 코스닥150레버리지",
              "252670": "KODEX 200선물인버스2X"}
 NAVER_MAX_DAILY_MOVE = 0.35
@@ -161,9 +165,36 @@ def naver_splits(frame: pd.DataFrame, symbol: str = "") -> pd.DataFrame:
     return out
 
 
+_NAVER_ROW = re.compile(r'\[\s*"(\d{8})"\s*,\s*([-\d.]+)\s*,\s*([-\d.]+)\s*,\s*([-\d.]+)\s*,\s*([-\d.]+)\s*,\s*([-\d.]+)')
+
+
+def parse_naver_range(text: str) -> pd.DataFrame:
+    """Rows `["YYYYMMDD", open, high, low, close, volume, ...]` of Naver's dated price list (the
+    header row and any further columns are ignored); the same columns and repairs as `parse_naver`."""
+    rows = _NAVER_ROW.findall(text)
+    if not rows:
+        if "[" not in text:
+            raise ProviderError(f"unexpected Naver response: {text[:200]}")
+        return pd.DataFrame(columns=COLUMNS, index=pd.DatetimeIndex([], name="date"))
+    items = "".join(f'<item data="{"|".join(r)}" />' for r in rows)
+    return parse_naver(f"<chartdata>{items}</chartdata>")
+
+
+def _naver_older(http, symbol: str, start: str, before: pd.Timestamp, timeout: float) -> tuple[pd.DataFrame, bytes]:
+    resp = http.get(NAVER_RANGE_URL, params={"symbol": symbol, "requestType": 1, "timeframe": "day",
+                                             "startTime": f"{pd.Timestamp(start):%Y%m%d}",
+                                             "endTime": f"{before:%Y%m%d}"},
+                    headers={"User-Agent": "Mozilla/5.0"}, timeout=timeout)
+    if resp.status_code != 200:
+        raise ProviderError(f"Naver {symbol} (older prices): HTTP {resp.status_code}: {resp.text[:200]}")
+    return parse_naver_range(resp.content.decode(resp.encoding or "euc-kr", errors="replace")), resp.content
+
+
 def fetch_naver(symbol: str, start: str, end: str | None = None, session=None,
                 timeout: float = 30.0) -> tuple[pd.DataFrame, bytes]:
-    """Whole daily history of a KRX code (no key needed), cut to [start, end]."""
+    """Whole daily history of a KRX code (no key needed), cut to [start, end]. When the chart stops at
+    its cap after `start`, the older sessions come from the dated list; the two must agree on the
+    session they share (the close within 0.5%), or the download stops."""
     import requests
 
     http = session or requests
@@ -175,9 +206,22 @@ def fetch_naver(symbol: str, start: str, end: str | None = None, session=None,
     frame = parse_naver(text)
     if frame.empty:
         raise ProviderError(f"Naver {symbol}: no prices (check the code)")
+    raw = resp.content
+    first = frame.index.min()
+    if len(frame) >= NAVER_CAP and first > pd.Timestamp(start) + pd.Timedelta(days=7):
+        older, raw_old = _naver_older(http, symbol, start, first, timeout)
+        if len(older) and first in older.index:
+            a, b = older.at[first, "close"], frame.at[first, "close"]
+            if not abs(a / b - 1) <= 0.005:
+                raise ProviderError(f"Naver {symbol}: the two price lists disagree on {first.date()} "
+                                    f"(close {a:,.0f} vs {b:,.0f})")
+        older = older[older.index < first]
+        if len(older):
+            frame = pd.concat([older, frame])
+            raw = raw_old + b"\n" + raw
     frame = naver_splits(frame, symbol)
     frame = frame.loc[pd.Timestamp(start):]
-    return (frame.loc[: pd.Timestamp(end)] if end else frame), resp.content
+    return (frame.loc[: pd.Timestamp(end)] if end else frame), raw
 
 
 # --- CSV -------------------------------------------------------------------------

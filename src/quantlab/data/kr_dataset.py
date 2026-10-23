@@ -1,6 +1,7 @@
 """Index dataset KRTOP300: Korean stocks from the exchange's daily snapshots on the session calendar of
 the KODEX 200 (069500) dataset (D-038). Same layout as the S&P 500 datasets (quantlab.data.index_dataset,
-which also loads it): stocks.parquet, members.parquet, events.parquet (empty: no filings yet).
+which also loads it): stocks.parquet, members.parquet, events.parquet (empty, or with `dart=True` the
+OpenDART filings of the members, D-040).
 """
 
 from __future__ import annotations
@@ -10,7 +11,7 @@ import json
 import pandas as pd
 
 from quantlab.core.hashing import file_sha256, stable_hash
-from quantlab.data import index_dataset, kr_stocks, krx_open
+from quantlab.data import dart_open, index_dataset, kr_stocks, krx_open
 
 PROCESSING_VERSION = 1
 INDEX = "KRTOP300"
@@ -18,10 +19,11 @@ BENCHMARK = "069500"
 MAX_MISSING_SHARE = 0.005    # sessions without a snapshot (either market); above this the dataset is unusable
 MIN_COVERAGE = 0.995         # member-sessions with a close
 MIN_BASKET_CORR = 0.80       # equal-weight member basket vs KODEX 200, daily returns
-EVENT_COLUMNS = ["known", "symbol", "kind", "value", "officer", "director", "owner"]
+MIN_DART_SHARE = 0.80        # members with a DART company code; fewer is a warning (delisted names may lack one)
+EVENT_COLUMNS = dart_open.EVENT_COLUMNS
 
 
-def build(store, base_version: str, root, start: str, say=None) -> tuple[str, dict]:
+def build(store, base_version: str, root, start: str, say=None, dart: bool = False) -> tuple[str, dict]:
     say = say or (lambda s: None)
     base, base_manifest = store.load_dataset(base_version)
     sessions = base.calendar[base.calendar >= pd.Timestamp(start)]
@@ -31,6 +33,8 @@ def build(store, base_version: str, root, start: str, say=None) -> tuple[str, di
     inputs = {"processing": PROCESSING_VERSION, "kind": "index", "index": INDEX, "start": str(start),
               "base_dataset": base_version, "krx": inputs_raw, "top_n": kr_stocks.TOP_N,
               "min_value": kr_stocks.MIN_VALUE}
+    if dart:
+        inputs["dart"] = dart_open.inputs(root)
     version = stable_hash(inputs)
     done = store.proc_dir / version[:16] / "manifest.json"
     if done.exists():
@@ -79,6 +83,21 @@ def build(store, base_version: str, root, start: str, say=None) -> tuple[str, di
     stocks.to_parquet(out / "stocks.parquet", index=False)
     members.to_parquet(out / "members.parquet")
     events = pd.DataFrame({c: pd.Series(dtype="datetime64[ns]" if c == "known" else "object") for c in EVENT_COLUMNS})
+    dart_counts = None
+    if dart:
+        say("DART 공시 정리 중")
+        raw = snaps[snaps["code"].isin(set(members.columns))]
+        closes = kr_stocks._wide(raw, "close", sessions, list(members.columns))
+        caps = kr_stocks._wide(raw, "mktcap", sessions, list(members.columns))
+        events, dart_counts = dart_open.events(root, list(members.columns), closes, caps)
+        share = dart_counts["mapped"] / max(len(members.columns), 1)
+        dart_counts["mapped_share"] = share
+        if not len(events):
+            fatal.append("DART: no filings for any member (download not finished?)")
+        elif share < MIN_DART_SHARE:
+            warnings.append(f"DART: only {share:.0%} of members have a company code (delisted names may lack one)")
+        if dart_counts["no_date"]:
+            warnings.append(f"DART: {dart_counts['no_date']} filings without a receipt date dropped")
     events.to_parquet(out / "events.parquet", index=False)
     manifest = {"dataset_version": version, "processing_version": PROCESSING_VERSION, "kind": "index",
                 "index": INDEX, "inputs": inputs, "symbols": base_manifest["symbols"], "base_dataset": base_version,
@@ -87,7 +106,8 @@ def build(store, base_version: str, root, start: str, say=None) -> tuple[str, di
                 "sessions": [str(sessions[0].date()), str(sessions[-1].date())], "coverage": cov,
                 "price_counts": counts, "names": {c: str(n) for c, n in names.items()},
                 "missing_sessions": {m: len(v) for m, v in missing.items()},
-                "basket_corr_benchmark": corr, "qc_fatal": fatal, "qc_warnings": warnings}
+                "basket_corr_benchmark": corr, "dart": dart_counts,
+                "qc_fatal": fatal, "qc_warnings": warnings}
     (out / "manifest.json").write_text(json.dumps(manifest, indent=1, ensure_ascii=False, default=str),
                                        encoding="utf-8")
     if store.registry is not None:
