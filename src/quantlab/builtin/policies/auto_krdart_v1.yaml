@@ -1,0 +1,67 @@
+# Validation policy for AUTO-KRDART (D-040): round 4 of the research factory, Korean stocks (KRTOP300) with
+# OpenDART filings, written 2026-10-24 before any filing was downloaded by the app or seen by Claude.
+# Costs, gates and search filters are auto_krstk_v1's unchanged. Splits moved: buyback filings are served
+# from 2015 and the KODEX 200 prices the app had held started 2014-07-30, so TRAIN is 2014-08 to 2017 and
+# VALIDATION 2018-2019. The 2020+ holdout of these stocks was read by D-039 (shared with AUTO-KRSTK): a
+# rule from this round is judged on forward paper data only. prior_trials counts AUTO-KRSTK's 276,210
+# trials and its final evaluation.
+# Frozen: the registry stores its hash; changing anything requires version: 2.
+policy_id: auto_krdart
+version: 1
+strategy_family: AUTO-KRDART
+universe: [KRTOP300, "069500"]
+benchmark_symbol: "069500"
+risk_free_symbol: null
+initial_cash: 100000000
+
+splits:
+  train: ["2014-08-01", "2017-12-31"]
+  validation: ["2018-01-01", "2019-12-31"]
+  holdout: ["2020-01-01", null]
+  forward_holdout_start: "2026-10-27"
+
+costs:
+  commission_bps: 1.5           # Kiwoom domestic online (default rate)
+  slippage_bps: 10.0
+  fixed_fee: 0.0
+  sell_tax_bps: 20.0            # securities transaction tax on stock sales (2026 rate)
+  tax_exempt: ["069500"]        # ETF sales carry no transaction tax
+
+gate1:
+  leak_test_cutpoints: 5
+  leak_test_seed: 20261024
+
+gate2:
+  min_sharpe_diff: -0.10
+  max_mdd_ratio: 0.90
+  rule: "PASS if sharpe_diff >= min_sharpe_diff OR mdd_ratio <= max_mdd_ratio, else FAIL"
+
+gate3:
+  min_sharpe_diff: 0.0
+  bootstrap: {block: 63, n_boot: 10000, seed: 20261024, max_p_value: 0.10}
+  max_mdd_ratio: 0.80
+  min_position_changes: 6
+  min_sessions: 504
+
+gate4_partial:
+  stress_cost_multiplier: 2.0
+  stress_min_sharpe_diff: 0.0
+  neighbor_params: {}            # neighbours are checked during the search (TRAIN+VALIDATION), see auto_search
+  neighbor_min_sharpe_diff: 0.0
+
+auto_search:
+  trials_per_run: 3000
+  order: affine                 # fixed affine walk of the full grid; each run takes the next untried combinations
+  order_seed: 20261024
+  prior_trials: 276211
+  min_trades_train: 40
+  min_trades_validation: 20
+  min_gross_per_trade: 0.009    # before costs, over KODEX 200: about twice the 0.43% round trip
+  stress_cost_multiplier: 2.0   # CAGR must stay above 0 at twice the costs
+  max_drawdown_floor: -0.35
+  beat_symbol: "069500"
+  beat_metric: cagr             # CAGR (rule + KODEX 200 on idle equity) above KODEX 200 buy-and-hold's
+  park_symbol: "069500"         # idle equity is held in KODEX 200 (spec: rules.stock_combo.park)
+  versus: "069500"              # per-trade gross, top-10 and t-value read the return over KODEX 200
+  alpha: 0.05                   # one-sided; Bonferroni over the family's trial count
+  neighbour_min_share: 0.5

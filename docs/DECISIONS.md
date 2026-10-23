@@ -560,3 +560,28 @@ below its own 200-day average, held 5 sessions (t 3.3-3.7, about 150 trades in 2
   t 3.65). It is `PREREGISTERED["AUTO-KRSTK"]` and must not change.
 - As D-024: not a candidate; the final evaluation runs under auto_krstk_v1 with the family's 276,210
   trials, read as a check of the theme. After it the group cannot read the holdout again.
+
+## D-040 · 2026-10-24 · Factory round 4: Korean filings from OpenDART (AUTO-KRDART)
+- D-039's rule failed its final evaluation (holdout 2020+: CAGR 21.9% vs KODEX 200's 19.6%, Sharpe
+  difference +0.05, p 0.164; per-trade net +0.97% against +2.95% before 2020). The user chose a fourth
+  round built on Korean filings, the free source of new information the factory had not seen.
+- Data: `quantlab.data.dart_open`, the user's OpenDART key in the Windows credential store. Per member
+  company (stock code -> corp_code by corpCode.xml): executives' and major shareholders' holding reports
+  (elestock) and buyback decisions, direct and through trust contracts (served from 2015). About three
+  calls per company against a ~20,000 daily limit; a run that hits it stops and the next continues.
+  Layout taken from public clients (dart-fss, OpenDartReader); the first download on the user's PC is
+  the real format check. Events: `kr_ins_buy` / `kr_ins_sell` (holding up / down; a first report is not
+  a purchase; the report does not say why a holding changed), value in won at that day's close;
+  `kr_buyback`, value = planned amount / market value when stated. Delisted companies may lack a code.
+- Stock catalog 6: catalog 5 plus 7 items — 1 or 2 executives/major shareholders reporting an increase
+  of 10 million won or more in 30 days, one adding 300 million won or more, 3 reporting decreases of 100
+  million won or more, no decrease in 90 days, a buyback decision or trust contract in the last 14 days,
+  one planning 1% or more of market value. 3,928 entries, 636,336 combinations; the 276,210 that are
+  catalog 5's (AUTO-KRSTK) are skipped, leaving 360,126.
+- Policy auto_krdart_v1: auto_krstk_v1's costs, gates and filters; TRAIN 2014-08 to 2017, VALIDATION
+  2018-2019 (buybacks start 2015); prior_trials 276,211. The KRTOP300 holdout is shared with AUTO-KRSTK
+  and was read by D-039, so a rule from this round is judged on forward paper data only.
+- KODEX 200 from Naver: the chart returns at most 3,000 sessions (the app held 069500 from 2014-07-30
+  only, so AUTO-KRSTK and AUTO-KR2X searched from mid-2014, not 2010). When the chart stops after the
+  requested start, the older sessions come from Naver's dated price list, which must agree with the
+  chart on the session they share.

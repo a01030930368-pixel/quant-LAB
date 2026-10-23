@@ -196,6 +196,15 @@ class DataScreen(Screen):
         xl.addWidget(self.button("저장", self.save_krx_key))
         lay.addWidget(krx)
 
+        dart = QGroupBox("OpenDART 인증키 (한국 공시, opendart.fss.or.kr)")
+        dl = QHBoxLayout(dart)
+        self.dart_key = QLineEdit()
+        self.dart_key.setEchoMode(QLineEdit.Password)
+        self.dart_key.setPlaceholderText("키를 붙여넣고 저장 (Windows 자격 증명 관리자에 보관)")
+        dl.addWidget(self.dart_key)
+        dl.addWidget(self.button("저장", self.save_dart_key))
+        lay.addWidget(dart)
+
         fetch = QGroupBox("가격 내려받기 (일봉, 원가격 + 배당·분할)")
         fl = QHBoxLayout(fetch)
         self.symbols = QLineEdit("SPY BIL")
@@ -255,6 +264,13 @@ class DataScreen(Screen):
             self.lab.set_api_key(k, "krx")
             self.krx_key.clear()
             self.win.status("KRX 인증키를 저장했습니다.")
+
+    def save_dart_key(self):
+        k = self.dart_key.text().strip()
+        if k:
+            self.lab.set_api_key(k, "dart")
+            self.dart_key.clear()
+            self.win.status("OpenDART 인증키를 저장했습니다.")
 
     def save_sec_email(self):
         try:

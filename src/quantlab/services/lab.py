@@ -340,10 +340,14 @@ class Lab:
     def has_krx_key(self) -> bool:
         return providers.get_api_key("krx") is not None
 
-    def ensure_kr_dataset(self, base_version: str, start: str, say=None, today=None) -> str:
+    def has_dart_key(self) -> bool:
+        return providers.get_api_key("dart") is not None
+
+    def ensure_kr_dataset(self, base_version: str, start: str, say=None, today=None, dart: bool = False) -> str:
         """Korean stocks (KRTOP300, D-038) on top of the KODEX 200 dataset `base_version`: downloads the
-        exchange's snapshots not stored yet (KRX Open API, the user's key), then builds or reuses."""
-        from quantlab.data import kr_dataset, krx_open
+        exchange's snapshots not stored yet (KRX Open API, the user's key), then builds or reuses. With
+        `dart`, also the members' OpenDART filings (D-040, the user's DART key) as events."""
+        from quantlab.data import dart_open, kr_dataset, krx_open
 
         say = say or (lambda s: None)
         key = providers.get_api_key("krx")
@@ -357,6 +361,16 @@ class Lab:
             raise RuntimeError(f"한국거래소 자료를 아직 {left}거래일치 더 받아야 합니다"
                                f"{' (하루 호출 한도)' if got['stopped'] else ''}. 다음 실행 때 이어서 받습니다.")
         version, manifest = kr_dataset.build(self.data, base_version, self.ws.root, start, say)
+        if dart:
+            dkey = providers.get_api_key("dart")
+            if not dkey:
+                raise RuntimeError("한국 공시(DART) 자료를 받으려면 OpenDART 인증키가 필요합니다. "
+                                   "설정 화면의 'OpenDART 키'에 넣어 주세요.")
+            got = dart_open.download(self.ws.root, dkey, sorted(manifest["names"]), today=today, say=say)
+            if got["left"]:
+                raise RuntimeError(f"DART 공시를 아직 {got['left']}건 더 받아야 합니다"
+                                   f"{' (하루 호출 한도)' if got['stopped'] else ''}. 다음 실행 때 이어서 받습니다.")
+            version, manifest = kr_dataset.build(self.data, base_version, self.ws.root, start, say, dart=True)
         if manifest["qc_fatal"]:
             say("품질 검사 치명 항목이 있습니다. 결과는 INVALID로 처리됩니다.")
         return version
@@ -365,7 +379,8 @@ class Lab:
         symbols, start = loaded.spec["universe"]["symbols"], policy["splits"]["train"][0]
         base = self.ensure_dataset(symbols, start, say)
         if loaded.spec["universe"].get("index") == "KRTOP300":
-            return self.ensure_kr_dataset(base, start, say)
+            catalog = (loaded.spec["rules"].get("stock_combo") or {}).get("catalog")
+            return self.ensure_kr_dataset(base, start, say, dart=catalog == 6)
         if "index" in loaded.spec["universe"]:
             return self.ensure_index_dataset(base, start, say, today=today, facts="value" in loaded.spec["rules"])
         return base

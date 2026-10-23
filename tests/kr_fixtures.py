@@ -113,3 +113,78 @@ def store_snapshots(root, snaps: dict) -> None:
         p.parent.mkdir(parents=True, exist_ok=True)
         with gzip.open(p, "wb") as g:
             g.write(json.dumps({"OutBlock_1": rows}, ensure_ascii=False).encode("utf-8"))
+
+
+# --- OpenDART (D-040) -----------------------------------------------------------------------------
+def corp(code: str) -> str:
+    return "00" + code
+
+
+def dart_docs(snaps: dict, seed: int = 5) -> dict:
+    """{(endpoint, corp_code): rows} in the layout OpenDART returns: holdings reports of executives and
+    major shareholders (some up, some down, a first report) and buyback decisions from 2015."""
+    rng = np.random.default_rng(seed)
+    days = sorted({d for (_, d) in snaps})
+    out = {}
+    for code, (name, *_rest) in STOCKS.items():
+        if code == "123450":
+            continue                                   # a delisted name without a company code
+        c = corp(code)
+        rows = [{"rcept_no": f"{days[5]:%Y%m%d}000001", "rcept_dt": f"{days[5]:%Y-%m-%d}", "corp_code": c,
+                 "corp_name": name, "repror": "신임이사", "isu_exctv_rgist_at": "등기임원", "isu_exctv_ofcps": "이사",
+                 "isu_main_shrholdr": "-", "sp_stock_lmp_cnt": "5,000", "sp_stock_lmp_irds_cnt": "5,000",
+                 "sp_stock_lmp_rate": "0.01", "sp_stock_lmp_irds_rate": "0.01"}]
+        for i, d in enumerate(rng.choice(days[300:], size=40, replace=False)):
+            up = rng.random() < 0.6
+            who = f"임원{rng.integers(0, 6)}"
+            rows.append({"rcept_no": f"{d:%Y%m%d}{i:06d}", "rcept_dt": f"{d:%Y-%m-%d}", "corp_code": c, "corp_name": name,
+                         "repror": who, "isu_exctv_rgist_at": "비등기임원" if i % 3 else "-",
+                         "isu_exctv_ofcps": "상무", "isu_main_shrholdr": "주요주주" if i % 3 == 0 else "-",
+                         "sp_stock_lmp_cnt": f"{100_000:,}", "sp_stock_lmp_irds_cnt": f"{(1 if up else -1) * 20_000:,}",
+                         "sp_stock_lmp_rate": "0.10", "sp_stock_lmp_irds_rate": "0.02"})
+        out[("elestock", c)] = rows
+        bb = [d for d in rng.choice([d for d in days if d >= pd.Timestamp("2015-01-02")], size=3, replace=False)]
+        out[("buyback", c)] = [{"rcept_no": f"{d:%Y%m%d}800001", "corp_code": c, "corp_name": name,
+                                "aqpln_stk_ostk": "10,000", "aqpln_prc_ostk": f"{3_000_000_000:,}", "aq_pp": "주가안정"}
+                               for d in bb]
+        out[("trust", c)] = [{"rcept_no": f"{bb[0]:%Y%m%d}900001", "corp_code": c, "ctr_prc": "-"}]
+    return out
+
+
+class FakeDart:
+    """Answers like OpenDART from `dart_docs`; `limit` calls, then status 020; `long_span` answers 100
+    to a receipt-date range of more than a year (the code then asks one year at a time)."""
+
+    def __init__(self, docs: dict, key: str = "dart-key", limit: int | None = None, long_span: bool = False) -> None:
+        self.docs, self.key, self.limit, self.long_span, self.calls = docs, key, limit, long_span, []
+
+    def get(self, url, params=None, headers=None, timeout=None):
+        import io
+        import zipfile
+
+        from quantlab.data import dart_open
+
+        if params.get("crtfc_key") != self.key:
+            return Resp(200, {"status": "010", "message": "등록되지 않은 키입니다."})
+        if url.endswith("corpCode.xml"):
+            items = "".join(f"<list><corp_code>{corp(c)}</corp_code><corp_name>{n}</corp_name>"
+                            f"<stock_code>{c}</stock_code><modify_date>20260101</modify_date></list>"
+                            for c, (n, *_r) in STOCKS.items() if c != "123450")
+            items += "<list><corp_code>99999999</corp_code><corp_name>비상장</corp_name><stock_code> </stock_code></list>"
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, "w") as z:
+                z.writestr("CORPCODE.xml", f'<?xml version="1.0" encoding="UTF-8"?><result>{items}</result>')
+            r = Resp(200, {})
+            r.content = buf.getvalue()
+            return r
+        if self.limit is not None and len(self.calls) >= self.limit:
+            return Resp(200, {"status": "020", "message": "사용한도를 초과하였습니다."})
+        ep = next(e for e, f in dart_open.ENDPOINTS.items() if url.endswith(f))
+        self.calls.append((ep, params["corp_code"]))
+        if ep in dart_open.DATED and self.long_span and params["bgn_de"][:4] != params["end_de"][:4]:
+            return Resp(200, {"status": "100", "message": "필드의 부적절한 값입니다."})
+        rows = self.docs.get((ep, params["corp_code"]), [])
+        if ep in dart_open.DATED:
+            rows = [r for r in rows if params["bgn_de"] <= r["rcept_no"][:8] <= params["end_de"]]
+        return Resp(200, {"status": "000", "message": "정상", "list": rows} if rows else
+                    {"status": "013", "message": "조회된 데이타가 없습니다."})

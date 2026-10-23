@@ -211,6 +211,8 @@ class HomePage(Page):
         self.body.addWidget(self.key_card)
         self.krx_card = self._krx_card()
         self.body.addWidget(self.krx_card)
+        self.dart_card = self._dart_card()
+        self.body.addWidget(self.dart_card)
 
         row = QHBoxLayout()
         row.setSpacing(12)
@@ -325,6 +327,28 @@ class HomePage(Page):
             self.krx_key.clear()
             self.refresh()
 
+    def _dart_card(self) -> Card:
+        c = Card(12, 8)
+        c.lay.addLayout(pane_header("한국 공시 자료 연결"))
+        c.lay.addWidget(label("한국 공시 자동 탐색(공장 4차)은 OpenDART 인증키가 있어야 해요. "
+                              "opendart.fss.or.kr에서 받은 키를 넣어 주세요. 키는 Windows 자격 증명 관리자에만 저장돼요.",
+                              "body2", wrap=True))
+        row = QHBoxLayout()
+        self.dart_key = QLineEdit()
+        self.dart_key.setEchoMode(QLineEdit.Password)
+        self.dart_key.setPlaceholderText("OpenDART 인증키 붙여넣기")
+        row.addWidget(self.dart_key, 1)
+        row.addWidget(button("저장", "primary", self.save_dart_key))
+        c.lay.addLayout(row)
+        return c
+
+    def save_dart_key(self):
+        k = self.dart_key.text().strip()
+        if k:
+            self.lab.set_api_key(k, "dart")
+            self.dart_key.clear()
+            self.refresh()
+
     def save_key(self):
         k = self.key.text().strip()
         if k:
@@ -346,6 +370,7 @@ class HomePage(Page):
     def refresh(self):
         self.key_card.setVisible(not self.lab.has_api_key())
         self.krx_card.setVisible(not self.lab.has_krx_key())
+        self.dart_card.setVisible(not self.lab.has_dart_key())
         history = self.lab.registry.history()
         formal = [e for e in history if e["kind"] == "formal"]
         self.paths = list(self.lab.strategy_files())
