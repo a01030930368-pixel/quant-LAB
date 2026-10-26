@@ -95,7 +95,8 @@ class DataStore:
             for c in m["qc"]["checks"]:
                 msg = f"{s}: {c['name']}: {c['detail']}"
                 if c["status"] == "fatal":
-                    fatal.append(msg)
+                    first = c.get("dates") or []
+                    fatal.append(msg + (f" (first: {', '.join(first[:5])})" if first else ""))
                 elif c["status"] == "warn":
                     warnings.append(msg)
         manifest = {"dataset_version": version, "processing_version": PROCESSING_VERSION,
