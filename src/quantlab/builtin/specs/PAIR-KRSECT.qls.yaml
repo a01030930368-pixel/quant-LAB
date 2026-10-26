@@ -1,0 +1,59 @@
+# Korean sector funds paired against the KOSPI 200, held long only (D-041). Fixed 2026-10-26 before
+# this rule was run on any data, by Claude or the app; three neighbours are fixed with it (policy
+# pair_krsect_v1), so four trials in all. None of these sector funds or the inverse fund was used by
+# earlier work; the KOSPI 200 path was seen through KODEX 200 (AUTO-KR2X, AUTO-KRSTK) and Korean
+# stocks of 2020 onward through one rule's final evaluation (D-039).
+spec_version: 1
+strategy:
+  id: PAIR-KRSECT
+  version: 1.0.0
+  name: 업종 ETF 짝 매매 (업종 + 인버스, 한국)
+  type: mean_reversion
+  author: claude
+  parent: null
+  derived_after_holdout_view: false
+hypothesis:
+  class: theory
+  economic_rationale: >
+    Prices that have moved together drift back together after a gap opens between them (pairs
+    trading, Gatev, Goetzmann & Rouwenhorst 2006; Do & Faff 2010). A sector fund that falls far behind
+    the market in a few weeks is often pushed by flows, not news about the whole sector, and the gap
+    tends to close. Short selling is not open to the user, so the market side is a 1x inverse fund
+    held next to the sector fund: the pair earns about sector minus market, whichever way the market
+    goes. ETF sales carry no transaction tax in Korea, so a pair costs about 0.46% round trip.
+  expected_risks:
+    - a sector that keeps losing for years (shipbuilding 2011-2016) never closes its gap; the time limit caps it
+    - some sector funds trade thinly, so real slippage can exceed the 0.10% assumed
+    - the inverse fund resets daily, so over 20 sessions it does not exactly offset the market
+    - Naver prices do not include distributions (small for both legs)
+    - the edge was documented on US stocks before 2002 and has weakened there since
+  falsification: >
+    Net Sharpe not above KODEX 200 buy-and-hold with block-bootstrap p < 0.10, or max drawdown above
+    80% of KODEX 200's; or one of the neighbours (20-session window, entry at -1.5, 10-session limit)
+    with a Sharpe below KODEX 200's.
+universe:
+  market: KRX_ETF
+  symbols: ["091160", "091170", "091180", "102960", "102970", "117460", "117680", "117700", "140700",
+            "140710", "114800", "069500"]
+  frequency: daily
+rules:
+  kind: declarative
+  pairs:
+    # KODEX 반도체, 은행, 자동차, 기계장비, 증권, 에너지화학, 철강, 건설, 보험, 운송
+    trade: ["091160", "091170", "091180", "102960", "102970", "117460", "117680", "117700", "140700", "140710"]
+    base: "069500"     # KODEX 200
+    hedge: "114800"    # KODEX 인버스
+    leg_weight: 0.25
+    slots: 2
+execution:
+  signal_time: close
+  fill: next_open
+  rebalance: daily
+parameters:
+  lookback: {default: 60}
+  entry_z: {default: 2.0}
+  max_hold: {default: 20}
+benchmark: KODEX200_buy_and_hold
+costs: {one_way_bps: 11.5}   # informational; the validation policy's costs are binding
+validation:
+  policy: pair_krsect_v1

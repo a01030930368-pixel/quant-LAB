@@ -257,6 +257,10 @@ def load_spec(path: str | Path) -> LoadedSpec:
                 from quantlab.strategies.lowvol import LowVolStrategy
 
                 return LowVolStrategy(spec_id=sid, spec_version_str=ver, rules=rules, **params)
+            if "pairs" in rules:
+                from quantlab.strategies.pairs import PairsStrategy
+
+                return PairsStrategy(spec_id=sid, spec_version_str=ver, rules=rules, **params)
             if "calendar" in rules:
                 from quantlab.strategies.calendar_tom import CalendarStrategy
 
