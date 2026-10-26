@@ -1,0 +1,48 @@
+# Validation policy for PAIR-KRSECT (D-041), written 2026-10-26 before the rule was run.
+# Costs: Kiwoom domestic online commission 0.015% each way (confirmed by the user 2026-10-26), 0.10%
+# slippage each way (sector funds trade thinly; AUTO-KR2X used 0.05% on the large 2x funds), no
+# transaction tax on ETF sales. Idle equity is cash at 0% (no KRW cash fund lists before 2012).
+# Splits: TRAIN 2010-2016, VALIDATION 2017-2019, HOLDOUT 2020 onward (unread for these funds).
+# The forward holdout starts the day after this policy was written.
+# Frozen: the registry stores its hash; changing anything requires version: 2.
+policy_id: pair_krsect
+version: 1
+strategy_family: PAIR-KRSECT
+universe: ["091160", "091170", "091180", "102960", "102970", "117460", "117680", "117700", "140700",
+           "140710", "114800", "069500"]
+benchmark_symbol: "069500"
+risk_free_symbol: null
+initial_cash: 100000000
+
+splits:
+  train: ["2010-01-01", "2016-12-31"]
+  validation: ["2017-01-01", "2019-12-31"]
+  holdout: ["2020-01-01", null]
+  forward_holdout_start: "2026-10-27"
+
+costs:
+  commission_bps: 1.5
+  slippage_bps: 10.0
+  fixed_fee: 0.0
+
+gate1:
+  leak_test_cutpoints: 5
+  leak_test_seed: 20261026
+
+gate2:
+  min_sharpe_diff: -0.10
+  max_mdd_ratio: 0.90
+  rule: "PASS if sharpe_diff >= min_sharpe_diff OR mdd_ratio <= max_mdd_ratio, else FAIL"
+
+gate3:
+  min_sharpe_diff: 0.0
+  bootstrap: {block: 63, n_boot: 10000, seed: 20261026, max_p_value: 0.10}
+  max_mdd_ratio: 0.80
+  min_position_changes: 6
+  min_sessions: 504
+
+gate4_partial:
+  stress_cost_multiplier: 2.0
+  stress_min_sharpe_diff: 0.0
+  neighbor_params: {lookback: [20], entry_z: [1.5], max_hold: [10]}   # fixed with the rule; nothing is searched
+  neighbor_min_sharpe_diff: 0.0

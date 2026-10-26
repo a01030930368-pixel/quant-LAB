@@ -585,3 +585,20 @@ below its own 200-day average, held 5 sessions (t 3.3-3.7, about 150 trades in 2
   only, so AUTO-KRSTK and AUTO-KR2X searched from mid-2014, not 2010). When the chart stops after the
   requested start, the older sessions come from Naver's dated price list, which must agree with the
   chart on the session they share.
+
+## D-041 · 2026-10-26 · Sector funds paired against the market, long only (PAIR-KRSECT)
+- Factory round 4 found nothing (360,126 tried, best t 2.82 against 5.24). After about 2.3 million
+  rules the user chose to change direction, not to search more combinations, and picked pairs trading
+  over bundling weak rules. A lower commission is not available to the user; Kiwoom's domestic rate is
+  0.015% each way (confirmed by the user).
+- Rule (`pairs` block, `quantlab.strategies.pairs`): ten KODEX sector funds listed by 2011, each paired
+  with KODEX 200. Spread = log(fund) - log(KODEX 200); z over the last 60 sessions. A close with z at
+  or below -2 opens a pair from the next open: 25% of equity in the fund and 25% in KODEX 인버스
+  (114800), which stands in for the short sale the user cannot make. At most two pairs; a pair closes
+  when z is back at 0 or after 20 sessions. The rest is cash at 0%. Three neighbours are fixed with it
+  (20-session window, entry at -1.5, 10-session limit): four trials, nothing searched.
+- Policy pair_krsect_v1: commission 0.015% + slippage 0.10% each way, no ETF sales tax; TRAIN
+  2010-2016, VALIDATION 2017-2019, HOLDOUT 2020 onward. The holdout is unread for these funds; the
+  KOSPI 200 path and Korean stocks of 2020 onward were seen before (AUTO-KR2X, D-039), which is
+  disclosed in the spec. Gates are the project's standing ones against KODEX 200.
+- Same order as D-036: the user runs the 2010-2019 backtest first; opening the holdout is their call.
