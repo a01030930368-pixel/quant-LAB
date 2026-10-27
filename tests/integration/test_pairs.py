@@ -146,3 +146,29 @@ def test_final_evaluation_passes_the_integrity_checks(lab):
     out = lab.quick_final(SPEC)
     gates = {v["gate"]: v["verdict"] for v in lab.registry.verdicts(out.experiment_id)}
     assert gates["GATE1"] == "PASS"
+
+
+def test_a_download_made_today_for_a_later_start_is_fetched_again(tmp_path, monkeypatch):
+    # 2026-10-26: KODEX 200 had been fetched that day from 2014-08 (Korean stock round 4), and the
+    # pairs backtest reused it, so its spreads started in late 2014 instead of 2010
+    texts = {s: naver_text(s, df) for s, df in prices(6).items()}
+    calls = []
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        calls.append(params["symbol"])
+        return FakeResponse(texts[params["symbol"]])
+
+    import requests
+
+    monkeypatch.setattr(requests, "get", fake_get)
+    lab = Lab(tmp_path / "QL")
+    try:
+        later = lab.ensure_dataset([BASE], "2014-08-01")
+        same = lab.ensure_dataset([BASE], "2014-08-01")
+        assert later == same and calls == [BASE]                # same start: today's download is reused
+        version = lab.ensure_dataset([BASE], "2010-01-01")
+        assert calls == [BASE, BASE]
+        data, _ = lab.load_dataset(version)
+        assert data.calendar[0] < pd.Timestamp("2010-01-10")
+    finally:
+        lab.close()

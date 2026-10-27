@@ -249,7 +249,9 @@ class Lab:
         key = self.has_api_key()
         for s in symbols:
             recs = self.data.raw_records(s)
-            fresh = recs and recs[-1]["fetched_at"][:8] >= today
+            # a download made today for a later start (another group's) does not cover this one
+            got = (recs[-1].get("source") or {}).get("start") if recs else None
+            fresh = recs and recs[-1]["fetched_at"][:8] >= today and (got is None or str(got) <= str(start))
             needs_key = not providers.is_krx(s)  # Naver (KRX) needs no key
             if fresh or (recs and needs_key and not key):
                 continue
