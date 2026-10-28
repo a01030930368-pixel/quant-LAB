@@ -253,6 +253,7 @@ class HomePage(Page):
         acts.addWidget(self.run_btn)
         acts.addWidget(self.final_btn)
         acts.addWidget(button("명세서 추가", "secondary", self.add_spec))
+        acts.addWidget(button("공모주 첫날 조사", "secondary", self.ipo))
         acts.addStretch()
         acts.addWidget(label("탐색 실험은 최종 평가 구간을 열지 않아요", "muted"))
         left.lay.addLayout(acts)
@@ -510,6 +511,23 @@ class HomePage(Page):
 
         self._busy("준비 중")
         if not self.win.runner.start("백테스트", lambda p: self.lab.quick_backtest(path, say=p.say), done,
+                                     on_text=self.step.setText):
+            self._idle()
+        elif self.win.runner.last_error and self.win.runner.sync:
+            self._idle()
+
+    def ipo(self):
+        """D-042: every Korean IPO from 2015, offer price against the first day's open and close."""
+        def done(res):
+            folder, text = res
+            self._idle()
+            self.log_line(f"공모주 조사 결과: {folder}")
+            self.win.notify(f"{text}\n\n결과 파일: {folder}\n이 폴더의 파일을 Claude 프로젝트에 올리면 함께 볼 수 있어요.")
+            if not self.win.runner.sync:
+                QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
+
+        self._busy("공모주 조사 준비 중")
+        if not self.win.runner.start("공모주 첫날 조사", lambda p: self.lab.ipo_study(say=p.say), done,
                                      on_text=self.step.setText):
             self._idle()
         elif self.win.runner.last_error and self.win.runner.sync:

@@ -602,3 +602,23 @@ below its own 200-day average, held 5 sessions (t 3.3-3.7, about 150 trades in 2
   KOSPI 200 path and Korean stocks of 2020 onward were seen before (AUTO-KR2X, D-039), which is
   disclosed in the spec. Gates are the project's standing ones against KODEX 200.
 - Same order as D-036: the user runs the 2010-2019 backtest first; opening the holdout is their call.
+
+## D-042 · 2026-10-28 · Korean IPOs: offer price against the first day's open and close
+- After pairs trading failed (D-041) the user turned to edges only Korean individuals have and picked
+  IPO subscriptions first: individuals get an equal share of each offering, and the well-known claim is
+  that the first day usually trades well above the offer price. This is a survey, not a strategy: it
+  measures what selling on the first day would have returned, every IPO from 2015, before any rule is
+  written. It reads Korean prices from 2020 on, which D-039 had already opened; a rule built on it is
+  judged on forward records.
+- Listings (`quantlab.data.ipo`): a common share (code ending in 0, not a SPAC) whose code first appears
+  in the exchange's snapshots from 2015, reading from 2014 so older stocks are not new. A move between
+  KOSPI and KOSDAQ keeps the code.
+- Offer price: OpenDART estkRs (증권신고서 지분증권 주요정보), asked per listing for the 180 days before
+  it; the company by stock code in corpCode.xml, else by exact name (at most three companies). The
+  filing used is the last received whose subscription ended within 60 days before listing, leaving out
+  offers to shareholders or third parties. A first-day open outside 0.5-4.5 times that price is shown
+  for checking, not counted. Layout from opendart-go's test data; the first run on the user's PC is the
+  format check. Stored apart from the DART folder so the KRDART dataset's inputs do not change.
+- Output: exports/IPO-<date>/ (each listing, a summary per year, market and overall: mean, median,
+  share below the offer, worst; before costs, and net of 0.25% on the sale). The subscription fee is
+  per subscription, so it is left to the reader.
