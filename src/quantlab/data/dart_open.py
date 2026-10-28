@@ -80,14 +80,10 @@ def _check(doc: dict, what: str) -> list[dict]:
     raise DartError(f"DART {what}: {status} {doc.get('message')}")
 
 
-def corp_codes(root: str | Path, key: str, session=None, timeout: float = 60.0, refresh: bool = False) -> dict:
-    """{6-digit stock code: 8-digit corp_code} from corpCode.xml (stored; fetched again on `refresh`)."""
+def corp_list(key: str, session=None, timeout: float = 60.0) -> list[tuple[str, str, str]]:
+    """Every company in corpCode.xml as (corp_code, corp_name, stock_code or "")."""
     import requests
 
-    p = store_dir(root) / "corpCode.json.gz"
-    if p.exists() and not refresh:
-        with gzip.open(p, "rb") as g:
-            return json.loads(g.read().decode("utf-8"))
     http = session or requests.Session()
     resp = http.get(API + "corpCode.xml", params={"crtfc_key": key}, timeout=timeout)
     if resp.status_code != 200:
@@ -104,12 +100,22 @@ def corp_codes(root: str | Path, key: str, session=None, timeout: float = 60.0, 
                 raise DartError(f"DART corpCode: 응답을 읽을 수 없습니다 {resp.content[:200]!r}") from e
         _check(doc if isinstance(doc, dict) else {}, "corpCode")
         raise DartError("DART corpCode: 압축 파일이 아닙니다") from None
-    out = {}
+    out = []
     for item in ElementTree.fromstring(xml).iter("list"):
-        stock = (item.findtext("stock_code") or "").strip()
         corp = (item.findtext("corp_code") or "").strip()
-        if len(stock) == 6 and len(corp) == 8:
-            out[stock] = corp
+        if len(corp) == 8:
+            stock = (item.findtext("stock_code") or "").strip()
+            out.append((corp, (item.findtext("corp_name") or "").strip(), stock if len(stock) == 6 else ""))
+    return out
+
+
+def corp_codes(root: str | Path, key: str, session=None, timeout: float = 60.0, refresh: bool = False) -> dict:
+    """{6-digit stock code: 8-digit corp_code} from corpCode.xml (stored; fetched again on `refresh`)."""
+    p = store_dir(root) / "corpCode.json.gz"
+    if p.exists() and not refresh:
+        with gzip.open(p, "rb") as g:
+            return json.loads(g.read().decode("utf-8"))
+    out = {stock: corp for corp, _, stock in corp_list(key, session, timeout) if stock}
     p.parent.mkdir(parents=True, exist_ok=True)
     _write(p, out)
     return out

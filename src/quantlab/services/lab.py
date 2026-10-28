@@ -377,6 +377,38 @@ class Lab:
             say("품질 검사 치명 항목이 있습니다. 결과는 INVALID로 처리됩니다.")
         return version
 
+    def ipo_study(self, say=None, today=None, krx_session=None, dart_session=None) -> tuple[Path, str]:
+        """Korean IPOs from 2015 (D-042): offer price from OpenDART against the first day's open and close
+        in the exchange's snapshots. Writes exports/IPO-<date>/ and returns the folder and a summary."""
+        from quantlab.data import ipo, kr_dataset, krx_open
+
+        say = say or (lambda s: None)
+        key, dkey = providers.get_api_key("krx"), providers.get_api_key("dart")
+        if not key or not dkey:
+            raise RuntimeError("공모주 조사는 KRX Open API 키와 OpenDART 키가 모두 필요합니다. "
+                               "설정 화면에 두 키를 넣어 주세요.")
+        end = kr_dataset.latest_day(today)
+        got = krx_open.download(self.ws.root, key, end, start=ipo.WARMUP, session=krx_session, say=say, today=today)
+        left = max(len(v) for v in krx_open.missing_sessions(self.ws.root, ipo.WARMUP, end).values())
+        if left > kr_dataset.MAX_MISSING_SHARE * 4000:
+            raise RuntimeError(f"한국거래소 자료를 아직 {left}거래일치 더 받아야 합니다"
+                               f"{' (하루 호출 한도)' if got['stopped'] else ''}. 다음 실행 때 이어서 받습니다.")
+        say("새로 상장한 종목 찾는 중")
+        listings, left_out = ipo.new_listings(self.ws.root, end, say=say)
+        corps = ipo.companies(self.ws.root, dkey, session=dart_session, today=today)
+        got = ipo.download(self.ws.root, dkey, listings, corps, session=dart_session, say=say, today=today)
+        if got["left"]:
+            raise RuntimeError(f"증권신고서를 아직 {got['left']}곳 더 받아야 합니다"
+                               f"{' (하루 호출 한도)' if got['stopped'] else ''}. 다음 실행 때 이어서 받습니다.")
+        say("첫날 수익 계산 중")
+        t = ipo.table(self.ws.root, listings, corps)
+        s = ipo.summary(t)
+        text = ipo.report_text(t, s, left_out)
+        stamp = pd.Timestamp(today or pd.Timestamp.now(tz="Asia/Seoul").date())
+        folder = self.ws.path("exports") / f"IPO-{stamp:%Y%m%d}"
+        ipo.write(folder, t, s, text)
+        return folder, text
+
     def ensure_spec_dataset(self, loaded: LoadedSpec, policy: dict, say=None, today: str | None = None) -> str:
         symbols, start = loaded.spec["universe"]["symbols"], policy["splits"]["train"][0]
         base = self.ensure_dataset(symbols, start, say)
