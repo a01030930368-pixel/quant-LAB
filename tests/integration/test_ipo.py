@@ -1,7 +1,9 @@
-"""D-042: Korean IPOs, the offer price from OpenDART's equity registration statements against the first
-day's open and close in the exchange's snapshots, on synthetic snapshots and filings."""
+"""D-042: Korean IPOs, the final offer price (the exchange's base price from 2023-06-26, else the final-terms
+filing's text from OpenDART) against the first day's open and close in the exchange's snapshots, on
+synthetic snapshots and filings."""
 
 import io
+import json
 import zipfile
 
 import pandas as pd
@@ -24,11 +26,13 @@ STOCKS = {
     "888880": ("유상증자", "KOSDAQ", "2015-11-02", 4000, 4100),          # only a rights issue filed
     "666660": ("분할신설", "KOSPI", "2016-03-02", 30000, 31000),         # a spin-off: nothing filed
     "777770": ("엉뚱제약", "KOSDAQ", "2016-05-02", 30000, 29000),        # a filing far from the price
-    "222220": ("하락바이오", "KOSPI", "2016-07-01", 19000, 17000),       # offer 20,000: below on day one
+    "222220": ("하락바이오", "KOSPI", "2016-07-01", 19000, 17000),       # offer 20,000 (base price): below
     "222225": ("하락바이오우", "KOSPI", "2016-07-01", 15000, 15000),     # preferred
     "999990": ("이름없음", "KOSDAQ", "2016-09-01", 3000, 3000),          # no company at DART
 }
 MOVE = ("247540", "2015-07-01")
+RULE_CHANGE = "2016-06-01"   # stands in for 2023-06-26 here: 하락바이오's base price is its offer price
+BASE = {"222220": 20000}
 CORPS = {"005930": "00126380", "123450": "00100001", "247540": "00100002", "111110": "00111110",
          "333330": "00333330", "888880": "00888880", "666660": "00666660", "777770": "00777770",
          "222220": "00222220"}
@@ -38,10 +42,26 @@ FILINGS = {
     "00111110": [("20150120000001", "2015년 02월 16일 ~ 2015년 02월 17일", [("종류주", "99,999"), ("보통주", "9,000")], "일반공모"),
                  ("20150210000002", "2015년 02월 16일 ~ 2015년 02월 17일", [("종류주", "99,999"), ("보통주", "10,000")], "일반공모"),
                  ("20160801000003", "2016년 08월 20일 ~ 2016년 08월 21일", [("보통주", "50,000")], "주주배정후 실권주 일반공모")],
-    "00555550": [("20150720000001", "2015년 08월 20일 ~ 2015년 08월 21일", [("보통주", "5,000")], "일반공모")],
+    "00555550": [("20150720000001", "2015년 08월 20일 ~ 2015년 08월 21일", [("보통주", "5,000")], "일반공모")],  # final 6,000
     "00888880": [("20150920000001", "2015년 10월 10일 ~ 2015년 10월 11일", [("보통주", "3,000")], "주주배정후 실권주 일반공모")],
     "00777770": [("20160401000001", "2016년 04월 20일 ~ 2016년 04월 21일", [("보통주", "1,000")], "일반공모")],
-    "00222220": [("20160601000001", "2016년 06월 20일 ~ 2016년 06월 21일", [("보통주", "20,000")], "일반공모")],
+    "00222220": [("20160601000001", "2016년 06월 20일 ~ 2016년 06월 21일", [("보통주", "18,000")], "일반공모")],
+}
+# corp -> filings in list.json: (rcept_no, report_nm, document text or None)
+DOCS = {
+    "00111110": [("20150120000001", "증권신고서(지분증권)", "희망공모가액 9,000원 ~ 11,000원"),
+                 ("20150205000001", "[기재정정]증권신고서(지분증권)", "공모가액 9,000원 ~ 11,000원 (예정)"),
+                 ("20150212000001", "[발행조건확정]증권신고서(지분증권)",
+                  "수요예측 결과 확정공모가액은 10,000원 으로 결정되었습니다. 희망공모가액 9,000원 ~ 11,000원 "
+                  "모집총액 공모가액 10,000원 × 1,000,000주 = 10,000,000,000원"),
+                 ("20150310000001", "[발행조건확정]증권신고서(지분증권)", "확정공모가액 99,000원")],  # after listing
+    "00555550": [("20150720000001", "증권신고서(지분증권)", "공모가액 5,000원 ~ 6,000원"),
+                 ("20150815000001", "투자설명서", "확정 공모가 6,000원")],
+    "00777770": [("20160401000001", "증권신고서(지분증권)", "공모가액 1,000원"),
+                 ("20160415000001", "[발행조건확정]증권신고서(지분증권)", "확정공모가액 1,000원")],  # open 30x: wrong
+    "00222220": [("20160601000001", "증권신고서(지분증권)", "공모가액 18,000원 ~ 22,000원"),
+                 ("20160615000001", "[발행조건확정]증권신고서(지분증권)", "확정공모가액 20,000원")],
+    "00888880": [("20150920000001", "증권신고서(지분증권)", "주주배정 3,000원")],
 }
 
 
@@ -58,9 +78,10 @@ def snapshots() -> dict:
             if code == MOVE[0] and d >= pd.Timestamp(MOVE[1]):
                 m = "KOSPI"
             o, c = (opn, close) if i == 0 else (close, close)
+            change = c - BASE.get(code, o) if i == 0 else 0   # day one: against the base price
             out[(m, d)].append({
                 "BAS_DD": f"{d:%Y%m%d}", "ISU_CD": code, "ISU_NM": name, "MKT_NM": m, "SECT_TP_NM": "",
-                "TDD_CLSPRC": _fmt(c), "CMPPREVDD_PRC": "0", "FLUC_RT": "0.00", "TDD_OPNPRC": _fmt(o),
+                "TDD_CLSPRC": _fmt(c), "CMPPREVDD_PRC": _fmt(change), "FLUC_RT": "0.00", "TDD_OPNPRC": _fmt(o),
                 "TDD_HGPRC": _fmt(max(o, c)), "TDD_LWPRC": _fmt(min(o, c)), "ACC_TRDVOL": "1000",
                 "ACC_TRDVAL": str(1000 * c), "MKTCAP": str(1_000_000 * c), "LIST_SHRS": "1000000"})
     return out
@@ -99,9 +120,27 @@ class FakeIpoDart:
             r = Resp(200, {})
             r.content = buf.getvalue()
             return r
-        assert url == dart_open.API + ipo.ENDPOINT
         if self.limit is not None and len(self.calls) >= self.limit:
             return Resp(200, {"status": "020", "message": "사용한도를 초과하였습니다."})
+        if url.endswith("list.json"):
+            self.calls.append(("list", params["corp_code"]))
+            assert params["pblntf_ty"] == "C"
+            rows = [{"rcept_no": no, "report_nm": nm, "corp_code": params["corp_code"]}
+                    for no, nm, _ in DOCS.get(params["corp_code"], [])
+                    if params["bgn_de"] <= no[:8] <= params["end_de"]]
+            return Resp(200, {"status": "000", "message": "정상", "list": rows} if rows else
+                        {"status": "013", "message": "조회된 데이타가 없습니다."})
+        if url.endswith("document.xml"):
+            self.calls.append(("document", params["rcept_no"]))
+            text = next(t for rows in DOCS.values() for no, _, t in rows if no == params["rcept_no"])
+            xml = f'<?xml version="1.0"?><DOCUMENT><BODY><P>{text}</P><TABLE><TR><TD>-</TD></TR></TABLE></BODY></DOCUMENT>'
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, "w") as z:
+                z.writestr(f"{params['rcept_no']}.xml", xml.encode("cp949" if "6,000" in text else "utf-8"))
+            r = Resp(200, {})
+            r.content = buf.getvalue()
+            return r
+        assert url == dart_open.API + ipo.ENDPOINT
         self.calls.append(("estkRs", params["corp_code"]))
         return Resp(200, estk_doc(params["corp_code"], params["bgn_de"], params["end_de"]))
 
@@ -110,6 +149,7 @@ class FakeIpoDart:
 def fast(monkeypatch):
     monkeypatch.setattr(krx_open, "PAUSE_SECONDS", 0.0)
     monkeypatch.setattr(dart_open, "PAUSE_SECONDS", 0.0)
+    monkeypatch.setattr(ipo, "RULE_CHANGE", RULE_CHANGE)
 
 
 def test_new_listings_are_first_appearances_of_common_shares(tmp_path):
@@ -119,6 +159,7 @@ def test_new_listings_are_first_appearances_of_common_shares(tmp_path):
     assert left_out == {"spac": 1, "not_common": 1}
     first = got.set_index("code").loc["111110"]
     assert (first["date"], first["open"], first["close"]) == (pd.Timestamp("2015-03-02"), 18000, 15000)
+    assert got.set_index("code").loc["222220", "change"] == -3000
 
 
 def test_the_offer_is_the_last_filing_whose_subscription_ended_before_listing():
@@ -130,6 +171,24 @@ def test_the_offer_is_the_last_filing_whose_subscription_ended_before_listing():
     assert (best["rcept_no"], best["offer"]) == ("20150210000002", 10000)
     assert ipo.choose(rows, pd.Timestamp("2016-09-01")) is None   # a rights issue is not an IPO
     assert ipo.choose(rows, pd.Timestamp("2015-06-01")) is None   # subscription too long before
+
+
+def test_the_final_price_is_the_best_scored_number_the_opening_range_allows():
+    passages = ["확정공모가액은 39,000원으로 결정", "공모가액 33,000원 ~ 39,000원", "공모가액 33,000원 ~ 39,000원",
+                "공모가액 총 1,287,000,000원", "발행가액 2022년 기준"]
+    got = ipo.scores(passages)
+    assert got[39000] > got[33000] and 2022 not in got and 1_287_000_000 not in got
+    day = pd.Timestamp("2015-08-06")   # before the (test) rule change: 90-200%
+    assert ipo.allowed(39000, 53700, day) and ipo.allowed(33000, 53700, day) and not ipo.allowed(20000, 53700, day)
+    assert not ipo.allowed(18000, 88000, pd.Timestamp("2025-11-13"))       # 4.9 times: not even after the change
+    assert ipo.allowed(22000, 88000, pd.Timestamp("2025-11-13"))
+    text = ipo._text("<P>확정&nbsp;공모가 <B>6,000</B>원</P>".encode("cp949"))
+    assert ipo.snippets(text) == ["확정 공모가 6,000 원"]
+    ranked = ipo.final_filings([{"rcept_no": "20150205000001", "report_nm": "[기재정정]증권신고서(지분증권)"},
+                                {"rcept_no": "20150212000001", "report_nm": "[발행조건확정]증권신고서(지분증권)"},
+                                {"rcept_no": "20150213000001", "report_nm": "투자설명서"},
+                                {"rcept_no": "20150214000001", "report_nm": "증권발행실적보고서"}], pd.Timestamp("2015-03-02"))
+    assert [r["rcept_no"] for r in ranked] == ["20150212000001", "20150213000001", "20150205000001"]
 
 
 def test_study_end_to_end_resumes_after_the_daily_limit(tmp_path, monkeypatch):
@@ -144,25 +203,38 @@ def test_study_end_to_end_resumes_after_the_daily_limit(tmp_path, monkeypatch):
         dart = FakeIpoDart()
         folder, text = lab.ipo_study(today=TODAY, krx_session=krx, dart_session=dart)
         assert ("corpCode", None) not in dart.calls        # fetched once a day
-        asked = [c for _, c in dart.calls]
-        assert len(asked) == 6 - 3
-        t = pd.read_csv(folder / "ipo_firstday.csv", dtype={"code": str, "corp_code": str, "rcept_no": str})
+        assert [k for k, _ in dart.calls].count("estkRs") == 6 - 3
+        # list.json for the four listings with a first filing; final terms first, a second only if needed
+        assert sorted(c for k, c in dart.calls if k == "list") == ["00111110", "00222220", "00555550", "00777770"]
+        docs = [c for k, c in dart.calls if k == "document"]
+        assert "20150212000001" in docs and "20150205000001" not in docs   # the final terms were enough
+        assert "20160415000001" in docs and "20160401000001" in docs       # nothing allowed: the next one too
+        assert "20150310000001" not in docs                       # received after the listing
+        t = pd.read_csv(folder / "ipo_firstday.csv", dtype={"code": str, "corp_code": str, "rcept_no": str,
+                                                            "final_rcept_no": str})
         status = dict(zip(t["code"], t["status"]))
         assert status == {"111110": "ok", "555550": "ok", "888880": "no_filing", "666660": "no_filing",
-                          "777770": "price_check", "222220": "ok", "999990": "no_company"}
-        row = t.set_index("code").loc["111110"]
-        assert (row["offer"], row["rcept_no"], row["match"]) == (10000, "20150210000002", "code")
+                          "777770": "first_only", "222220": "ok", "999990": "no_company"}
+        t = t.set_index("code")
+        row = t.loc["111110"]
+        assert (row["first_offer"], row["rcept_no"], row["match"]) == (10000, "20150210000002", "code")
+        assert (row["offer"], row["offer_source"], row["final_rcept_no"]) == (10000, "dart", "20150212000001")
         assert row["ret_open"] == pytest.approx(0.8) and row["ret_close"] == pytest.approx(0.5)
-        assert t.set_index("code").loc["555550", "match"] == "name"
+        assert (t.loc["555550", "match"], t.loc["555550", "offer"], t.loc["555550", "first_offer"]) == ("name", 6000, 5000)
+        assert (t.loc["222220", "offer_source"], t.loc["222220", "offer"], t.loc["222220", "dart_final"]) == ("krx", 20000, 20000)
+        assert t.loc["222220", "first_offer"] == 18000
+        assert pd.isna(t.loc["777770", "offer"]) and t.loc["777770", "first_offer"] == 1000
         s = pd.read_csv(folder / "ipo_summary.csv").set_index("group")
         assert list(s.index) == ["2015", "2016", "KOSDAQ", "KOSPI", "전체"]
-        assert s.loc["2015", "n"] == 2 and s.loc["2015", "open_mean"] == pytest.approx(0.8)
-        assert s.loc["2015", "close_mean"] == pytest.approx(0.55) and s.loc["2015", "close_below"] == 0
+        assert s.loc["2015", "n"] == 2 and s.loc["2015", "open_mean"] == pytest.approx((0.8 + 0.5) / 2)
+        assert s.loc["2015", "close_mean"] == pytest.approx((0.5 + 1 / 3) / 2) and s.loc["2015", "close_below"] == 0
         assert s.loc["2016", "close_mean"] == pytest.approx(-0.15) and s.loc["2016", "close_below"] == 1
         assert s.loc["전체", "close_worst"] == pytest.approx(-0.15)
-        assert s.loc["전체", "close_net_mean"] == pytest.approx((0.5 + 0.6 - 0.15) / 3 - ipo.SELL_COST)
+        assert s.loc["전체", "close_net_mean"] == pytest.approx((0.5 + 1 / 3 - 0.15) / 3 - ipo.SELL_COST)
         assert s.loc["2016", "won_per_share_close"] == pytest.approx(-3000)
-        assert "새로 상장한 보통주 7곳" in text and "스팩 1곳" in text and "가격 확인 필요 1" in text
+        assert "새로 상장한 보통주 7곳" in text and "스팩 1곳" in text and "첫 신고서 가격만 있음 1" in text
+        assert "거래소 기준가 1, DART 신고서 2" in text and "1곳에서 거래소 기준가와 DART 신고서에서 읽은 가격이 1곳 일치" in text
+        assert set(json.loads((folder / "dart_samples.json").read_text(encoding="utf-8"))) == set(ipo.SAMPLES)
         assert (folder / "ipo_summary.txt").read_text(encoding="utf-8") == text
         # a later run asks nothing more of DART
         dart = FakeIpoDart()
