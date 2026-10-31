@@ -622,3 +622,19 @@ below its own 200-day average, held 5 sessions (t 3.3-3.7, about 150 trades in 2
 - Output: exports/IPO-<date>/ (each listing, a summary per year, market and overall: mean, median,
   share below the offer, worst; before costs, and net of 0.25% on the sale). The subscription fee is
   per subscription, so it is left to the reader.
+
+## D-043 · 2026-10-30 · IPO survey: the final offer price, not the first filing's
+- The first run on the user's PC (D-042: 1,009 listings, 769 priced) took the price from estkRs, which
+  turned out to give the first registration statement's price, mostly the low end of the range
+  offered to institutions (LG에너지솔루션 257,000 against a final 300,000; 카카오뱅크 33,000 against
+  39,000). 144 of 543 listings before 2023-06-26 opened above twice that price, which the exchange did
+  not allow, so the first results overstated the first-day gain and were not reported as findings.
+- The final price now comes from the exchange where it can: from 2023-06-26 a new listing's base price
+  on its first day is the offer price, so offer = first-day close - change. Before that, from the text
+  of the filing with the final terms ([발행조건확정]증권신고서(지분증권), else 투자설명서, else the last
+  correction; list.json, then document.xml): the number after the price words that scores best and
+  fits the opening range of the time (90-200% of the offer before 2023-06-26, 60-400% after). Listings
+  without one keep the first filing's price for reference and stay out of the summary.
+- Both prices are known from 2023-06-26 on; the report states how often they agree, which tests the
+  text reading on the real filings. A few well-known listings' raw DART answers go into the export
+  (dart_samples.json) so the layouts can be checked without opening the user's data folder.

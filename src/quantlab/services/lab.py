@@ -400,13 +400,17 @@ class Lab:
         if got["left"]:
             raise RuntimeError(f"증권신고서를 아직 {got['left']}곳 더 받아야 합니다"
                                f"{' (하루 호출 한도)' if got['stopped'] else ''}. 다음 실행 때 이어서 받습니다.")
+        got = ipo.download_final(self.ws.root, dkey, listings, corps, session=dart_session, say=say, today=today)
+        if got["left"]:
+            raise RuntimeError(f"확정 공모가 신고서를 아직 {got['left']}곳 더 받아야 합니다"
+                               f"{' (하루 호출 한도)' if got['stopped'] else ''}. 다음 실행 때 이어서 받습니다.")
         say("첫날 수익 계산 중")
         t = ipo.table(self.ws.root, listings, corps)
         s = ipo.summary(t)
         text = ipo.report_text(t, s, left_out)
         stamp = pd.Timestamp(today or pd.Timestamp.now(tz="Asia/Seoul").date())
         folder = self.ws.path("exports") / f"IPO-{stamp:%Y%m%d}"
-        ipo.write(folder, t, s, text)
+        ipo.write(folder, t, s, text, ipo.samples(self.ws.root))
         return folder, text
 
     def ensure_spec_dataset(self, loaded: LoadedSpec, policy: dict, say=None, today: str | None = None) -> str:
