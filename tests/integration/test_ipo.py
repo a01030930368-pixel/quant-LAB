@@ -56,6 +56,7 @@ DOCS = {
                   "모집총액 공모가액 10,000원 × 1,000,000주 = 10,000,000,000원"),
                  ("20150310000001", "[발행조건확정]증권신고서(지분증권)", "확정공모가액 99,000원")],  # after listing
     "00555550": [("20150720000001", "증권신고서(지분증권)", "공모가액 5,000원 ~ 6,000원"),
+                 ("20150814000001", "[발행조건확정]증권신고서(지분증권)", None),   # text not served
                  ("20150815000001", "투자설명서", "확정 공모가 6,000원")],
     "00777770": [("20160401000001", "증권신고서(지분증권)", "공모가액 1,000원"),
                  ("20160415000001", "[발행조건확정]증권신고서(지분증권)", "확정공모가액 1,000원")],  # open 30x: wrong
@@ -133,6 +134,9 @@ class FakeIpoDart:
         if url.endswith("document.xml"):
             self.calls.append(("document", params["rcept_no"]))
             text = next(t for rows in DOCS.values() for no, _, t in rows if no == params["rcept_no"])
+            if text is None:   # DART answers this for some filings
+                return Resp(200, '<?xml version="1.0" encoding="UTF-8"?><result><status>014</status>'
+                                 '<message>파일이 존재하지 않습니다.</message></result>')
             xml = f'<?xml version="1.0"?><DOCUMENT><BODY><P>{text}</P><TABLE><TR><TD>-</TD></TR></TABLE></BODY></DOCUMENT>'
             buf = io.BytesIO()
             with zipfile.ZipFile(buf, "w") as z:
@@ -209,6 +213,7 @@ def test_study_end_to_end_resumes_after_the_daily_limit(tmp_path, monkeypatch):
         docs = [c for k, c in dart.calls if k == "document"]
         assert "20150212000001" in docs and "20150205000001" not in docs   # the final terms were enough
         assert "20160415000001" in docs and "20160401000001" in docs       # nothing allowed: the next one too
+        assert "20150814000001" in docs and "20150815000001" in docs       # a missing text: the next one
         assert "20150310000001" not in docs                       # received after the listing
         t = pd.read_csv(folder / "ipo_firstday.csv", dtype={"code": str, "corp_code": str, "rcept_no": str,
                                                             "final_rcept_no": str})
