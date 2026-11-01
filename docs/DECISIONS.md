@@ -638,3 +638,18 @@ below its own 200-day average, held 5 sessions (t 3.3-3.7, about 150 trades in 2
 - Both prices are known from 2023-06-26 on; the report states how often they agree, which tests the
   text reading on the real filings. A few well-known listings' raw DART answers go into the export
   (dart_samples.json) so the layouts can be checked without opening the user's data folder.
+
+## D-044 · 2026-11-01 · The ten largest Korean stocks at 10% each (TOPCAP-KR)
+- Idea from the user (a short-form video): hold the market's ten largest stocks at 10% each and
+  rebalance. The other idea in the same message, buying the stocks Wall Street analysts rate best, has
+  no free point-in-time record of past ratings, so it waits (forward paper records only).
+- Rule (`topcap` block, `quantlab.strategies.topcap`): at the close of each month's last session, the
+  KRTOP300 members that traded that day ranked by the exchange's market value at that close; the ten
+  largest are held at 10% each from the next open and brought back to equal weight every month.
+  KODEX 200 is held before the first pick. Neighbours fixed with it: top 5 and top 20.
+- Data: KRTOP300 datasets built for this rule add each member's month-end market value as events
+  (kind `kr_mktcap`, `caps=True`); other rules' datasets keep their versions. A stock joins KRTOP300
+  after about six months of trading, so a large new listing enters later than in a pure top-ten list.
+- Policy topcap_kr_v1: the Korean stock costs (0.015% commission, 0.20% sales tax, 0.10% slippage) and
+  splits. The KRTOP300 holdout was read by D-039, so the rule is judged on 2010-2019 and forward
+  records; close to tracking the index, which the user's other app covers, as the spec discloses.
