@@ -64,7 +64,8 @@ BAND_SLACK = 0.01                          # tick rounding of the opening price
 PRICE_WORDS = ("확정공모가", "확정 공모가", "확정발행가", "공모가액", "공모가격", "모집가액", "모집(매출)가액",
                "매출가액", "발행가액", "1주당 공모가")
 FINAL_WORDS = ("확정",)
-DOCS_PER_LISTING = 2
+DOCS_PER_LISTING = 3
+MISSING = ("013", "014")              # document.xml: no data / 파일이 존재하지 않습니다
 SAMPLES = ("373220", "323410", "259960")   # LG에너지솔루션, 카카오뱅크, 크래프톤: raw answers in the export
 COLUMNS = ["date", "year", "market", "code", "name", "match", "corp_code", "rcept_no", "method", "first_offer",
            "krx_base", "dart_final", "final_rcept_no", "offer_source", "offer", "open", "close", "ret_open",
@@ -310,7 +311,10 @@ def _document(http, key: str, rcept_no: str, timeout: float) -> list[str]:
                 doc = json.loads(resp.content.decode("utf-8"))
             except (UnicodeDecodeError, json.JSONDecodeError) as e:
                 raise dart_open.DartError(f"DART document: 응답을 읽을 수 없습니다 {resp.content[:200]!r}") from e
-        dart_open._check(doc if isinstance(doc, dict) else {}, "document")
+        doc = doc if isinstance(doc, dict) else {}
+        if str(doc.get("status", "")) in MISSING:
+            return []  # the filing's text is not served (seen on the user's PC, 2026-11-01): try the next one
+        dart_open._check(doc, "document")
         return []
     out = []
     for n in z.namelist():
