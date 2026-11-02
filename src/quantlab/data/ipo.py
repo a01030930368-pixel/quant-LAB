@@ -36,6 +36,16 @@ the text reading.
 Returns are before costs; `SELL_COST` (commission + tax when selling) is taken off for the net column.
 The subscription fee (Kiwoom: 2,000 won per subscription for most customers) is per subscription, not
 per share, so it is left to the reader.
+
+What was known before subscribing (D-045): the final-terms filing also reports the institutions' demand
+(수요예측 경쟁률, "1,522.85:1") and the price range offered to them (희망공모가액 "9,000원 ~ 11,000원").
+For each priced listing the passages after `DEMAND_WORDS` are kept from that filing (the next one only if no
+ratio is found, at most `DEMAND_DOCS`), stored in data/bulk/dart-ipo/demand/. The ratio is the one quoted
+most often after the word 경쟁률 (the total is in both the summary sentence and the table; the largest wins
+a tie); the range is the most frequent "a원 ~ b원" pair after a range word with b/a at most `MAX_RANGE`.
+First-day returns are then grouped by fixed ratio buckets (`RATIO_EDGES`) and by where the final price
+fell in the range, for the whole period and from `RULE_CHANGE` on. The range's low end should equal
+estkRs's first price (`first_offer`), and how often it does is reported as a check on the reading.
 """
 
 from __future__ import annotations
@@ -44,6 +54,7 @@ import gzip
 import json
 import re
 import time
+from itertools import pairwise
 from pathlib import Path
 
 import numpy as np
@@ -67,6 +78,13 @@ FINAL_WORDS = ("확정",)
 DOCS_PER_LISTING = 3
 MISSING = ("013", "014")              # document.xml: no data / 파일이 존재하지 않습니다
 SAMPLES = ("373220", "323410", "259960")   # LG에너지솔루션, 카카오뱅크, 크래프톤: raw answers in the export
+DEMAND_WORDS = ("경쟁률", "희망공모가", "희망 공모가", "공모희망가", "공모가 밴드", "공모가밴드", "의무보유", "확약")
+RANGE_WORDS = ("희망공모가", "희망 공모가", "공모희망가", "공모가 밴드", "공모가밴드")
+DEMAND_WIDTH = 400                    # a ratio sits in a table, often far after its header
+DEMAND_DOCS = 2
+MAX_RANGE = 1.6
+RATIO_EDGES = (100, 500, 1000)        # 수요예측 경쟁률 buckets, fixed before looking (D-045)
+POSITIONS = ("범위 아래", "범위 하단", "범위 안", "범위 상단", "범위 위")
 COLUMNS = ["date", "year", "market", "code", "name", "match", "corp_code", "rcept_no", "method", "first_offer",
            "krx_base", "dart_final", "final_rcept_no", "offer_source", "offer", "open", "close", "ret_open",
            "ret_close", "status"]
@@ -83,6 +101,10 @@ def _path(root, code: str) -> Path:
 
 def _final_path(root, code: str) -> Path:
     return store_dir(root) / "final" / f"{code}.json.gz"
+
+
+def _demand_path(root, code: str) -> Path:
+    return store_dir(root) / "demand" / f"{code}.json.gz"
 
 
 def _read(p: Path):
@@ -285,13 +307,14 @@ def _text(blob: bytes) -> str:
     return re.sub(r"\s+", " ", raw).strip()
 
 
-def snippets(text: str, width: int = 160, cap: int = 300) -> list[str]:
-    """The text right after each price word (what the score reads, kept instead of the whole filing)."""
-    hits = sorted({m.start() for w in PRICE_WORDS for m in re.finditer(re.escape(w), text)})
+def snippets(text: str, width: int = 160, cap: int = 300, words: tuple = PRICE_WORDS) -> list[str]:
+    """The text right after each of `words` (what is read later, kept instead of the whole filing)."""
+    hits = sorted({m.start() for w in words for m in re.finditer(re.escape(w), text)})
     return [text[i:i + width] for i in hits[:cap]]
 
 
-def _document(http, key: str, rcept_no: str, timeout: float) -> list[str]:
+def _document(http, key: str, rcept_no: str, timeout: float, words: tuple = PRICE_WORDS,
+              width: int = 160) -> list[str]:
     import io
     import zipfile
 
@@ -318,7 +341,7 @@ def _document(http, key: str, rcept_no: str, timeout: float) -> list[str]:
         return []
     out = []
     for n in z.namelist():
-        out += snippets(_text(z.read(n)))
+        out += snippets(_text(z.read(n)), width=width, words=words)
     return out
 
 
@@ -413,6 +436,166 @@ def dart_final(root: str | Path, code: str, opn: float, listed: pd.Timestamp) ->
     return np.nan, ""
 
 
+# ----------------------------------------------------------------------------- demand (D-045)
+_RATIO = re.compile(r"(\d{1,3}(?:,\d{3})*(?:\.\d+)?|\d+(?:\.\d+)?)\s*(?::|대)\s*1(?![\d,.])")
+_RANGE = re.compile(r"(\d{1,3}(?:,\d{3})+|\d{3,7})\s*원?\s*[~∼～\-]\s*(\d{1,3}(?:,\d{3})+|\d{3,7})\s*원")
+
+
+def demand_ratio(passages: list[str]) -> float:
+    """The institutions' demand ratio quoted most often after 경쟁률 (the larger on a tie), or nan."""
+    seen: dict[float, int] = {}
+    for text in passages:
+        if not text.startswith("경쟁률"):
+            continue
+        for m in _RATIO.finditer(text):
+            v = float(m.group(1).replace(",", ""))
+            if v >= 0.01:
+                seen[v] = seen.get(v, 0) + 1
+    return max(seen, key=lambda v: (seen[v], v)) if seen else np.nan
+
+
+def price_range(passages: list[str]) -> tuple[float, float]:
+    """(low, high) of the price range offered to institutions quoted most often, or (nan, nan)."""
+    seen: dict[tuple, int] = {}
+    for text in passages:
+        if not any(text.startswith(w) for w in RANGE_WORDS):
+            continue
+        for a, b in _RANGE.findall(text[:120]):
+            lo, hi = float(a.replace(",", "")), float(b.replace(",", ""))
+            if 500 <= lo < hi <= lo * MAX_RANGE:
+                seen[(lo, hi)] = seen.get((lo, hi), 0) + 1
+    return max(seen, key=lambda k: (seen[k], k)) if seen else (np.nan, np.nan)
+
+
+def position(offer: float, lo: float, hi: float) -> str:
+    if not (np.isfinite(offer) and np.isfinite(lo) and np.isfinite(hi)):
+        return ""
+    if offer < lo - 0.5:
+        return POSITIONS[0]
+    if abs(offer - lo) < 0.5:
+        return POSITIONS[1]
+    if offer < hi - 0.5:
+        return POSITIONS[2]
+    return POSITIONS[3] if abs(offer - hi) < 0.5 else POSITIONS[4]
+
+
+def _demand_order(t_row, filings: list[dict], listed: pd.Timestamp) -> list[dict]:
+    ranked = final_filings(filings, listed)
+    first = str(t_row.final_rcept_no or "")
+    return sorted(ranked, key=lambda f: str(f["rcept_no"]) == first, reverse=True)   # stable: the price's filing first
+
+
+def download_demand(root: str | Path, key: str, t: pd.DataFrame, session=None, say=None, today=None,
+                    timeout: float = 60.0) -> dict:
+    """The demand and price-range passages of every priced listing's final-terms filing, not stored yet."""
+    import requests
+
+    say = say or (lambda s: None)
+    http = session or requests.Session()
+    today = pd.Timestamp(today or pd.Timestamp.now(tz="Asia/Seoul").date())
+    todo = [r for r in t[t["status"] == "ok"].itertuples()
+            if _final_path(root, r.code).exists() and not _demand_path(root, r.code).exists()]
+    fetched, stopped = 0, None
+    for i, r in enumerate(todo):
+        if i % 50 == 0:
+            say(f"공모주 수요예측 결과 받는 중: {i + 1}/{len(todo)}")
+        listed = pd.Timestamp(r.date)
+        docs = {}
+        try:
+            for f in _demand_order(r, _read(_final_path(root, r.code))["filings"], listed)[:DEMAND_DOCS]:
+                no = str(f["rcept_no"])
+                docs[no] = {"report_nm": f.get("report_nm"),
+                            "snippets": _document(http, key, no, timeout, words=DEMAND_WORDS, width=DEMAND_WIDTH)}
+                if np.isfinite(demand_ratio(docs[no]["snippets"])):
+                    break
+        except dart_open.DailyLimit as err:
+            stopped = str(err)
+            break
+        p = _demand_path(root, r.code)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        dart_open._write(p, {"asked": f"{today:%Y-%m-%d}", "listed": f"{listed:%Y-%m-%d}", "docs": docs})
+        fetched += 1
+    left = sum(1 for r in todo if not _demand_path(root, r.code).exists())
+    return {"fetched": fetched, "left": left, "stopped": stopped}
+
+
+def add_demand(root: str | Path, t: pd.DataFrame) -> pd.DataFrame:
+    """`t` with the demand ratio, the price range and where the final price fell in it."""
+    ratio, lo, hi, pos, src = [], [], [], [], []
+    for r in t.itertuples():
+        p = _demand_path(root, r.code)
+        got = (np.nan, np.nan, np.nan, "")
+        if p.exists():
+            docs = _read(p)["docs"]
+            for no, d in docs.items():           # the filing order was kept when storing
+                v = demand_ratio(d["snippets"])
+                if np.isfinite(v):
+                    got = (v, *price_range(d["snippets"]), no)
+                    break
+            if not got[3]:
+                allp = [x for d in docs.values() for x in d["snippets"]]
+                got = (np.nan, *price_range(allp), "")
+        ratio.append(got[0])
+        lo.append(got[1])
+        hi.append(got[2])
+        src.append(got[3])
+        pos.append(position(float(r.offer), got[1], got[2]))
+    return t.assign(demand_ratio=ratio, range_low=lo, range_high=hi, range_pos=pos, demand_rcept_no=src)
+
+
+def ratio_bucket(v: float) -> str:
+    if not np.isfinite(v):
+        return "못 읽음"
+    edges = RATIO_EDGES
+    if v < edges[0]:
+        return f"{edges[0]}:1 미만"
+    for a, b in pairwise(edges):
+        if v < b:
+            return f"{a}~{b}:1"
+    return f"{edges[-1]}:1 이상"
+
+
+def demand_summary(t: pd.DataFrame) -> pd.DataFrame:
+    ok = t[t["status"] == "ok"].copy()
+    ok["ratio_bucket"] = ok["demand_ratio"].map(ratio_bucket)
+    order = [f"{RATIO_EDGES[0]}:1 미만"] + [f"{a}~{b}:1" for a, b in pairwise(RATIO_EDGES)] + \
+            [f"{RATIO_EDGES[-1]}:1 이상", "못 읽음"]
+    rows = []
+    for period, g in (("전체 기간", ok), (f"{RULE_CHANGE} 이후", ok[ok["date"] >= pd.Timestamp(RULE_CHANGE)])):
+        for b in order:
+            sub = g[g["ratio_bucket"] == b]
+            if len(sub):
+                rows.append({"period": period, "kind": "수요예측 경쟁률", "group": b, **_stats(sub)})
+        for b in POSITIONS + ("",):
+            sub = g[g["range_pos"] == b]
+            if len(sub):
+                rows.append({"period": period, "kind": "확정 공모가 위치", "group": b or "못 읽음", **_stats(sub)})
+    return pd.DataFrame(rows)
+
+
+def demand_text(t: pd.DataFrame, d: pd.DataFrame) -> str:
+    ok = t[t["status"] == "ok"]
+    got = ok["demand_ratio"].notna().sum()
+    both = ok[ok["range_low"].notna() & ok["first_offer"].notna()]
+    same = int(((both["range_low"] - both["first_offer"]).abs() < 0.5).sum())
+    lines = ["", (f"상장 전에 알 수 있던 것 (공모가 찾은 {len(ok)}곳 중 수요예측 경쟁률 읽음 {got}곳, 희망 범위 읽음 "
+                  f"{ok['range_low'].notna().sum()}곳)"),
+             f"점검: 희망 범위 아래쪽 값이 첫 신고서 가격과 같은 곳 {same}/{len(both)}"]
+    for code in SAMPLES:
+        r = ok[ok["code"] == code]
+        if len(r):
+            r = r.iloc[0]
+            ratio = "못 읽음" if pd.isna(r["demand_ratio"]) else f"{r['demand_ratio']:,.2f}:1"
+            rng = "못 읽음" if pd.isna(r["range_low"]) else f"{r['range_low']:,.0f}~{r['range_high']:,.0f}원"
+            lines.append(f"확인용: {r['name']} 경쟁률 {ratio}, 희망 범위 {rng}, 확정 {r['offer']:,.0f}원")
+    for period in d["period"].unique() if len(d) else []:
+        lines += ["", f"[{period}] 묶음: 건수 | 시가에 팔기 평균/중앙값/공모가 아래 | 종가에 팔기 평균/공모가 아래"]
+        for r in d[d["period"] == period].itertuples():
+            lines.append(f"{r.kind} {r.group}: {r.n}건 | 시가 {_pct(r.open_mean)} / {_pct(r.open_median)} / "
+                         f"{r.open_below * 100:.0f}% | 종가 {_pct(r.close_mean)} / {r.close_below * 100:.0f}%")
+    return "\n".join(lines)
+
+
 # ----------------------------------------------------------------------------- results
 def table(root: str | Path, listings: pd.DataFrame, corps: dict) -> pd.DataFrame:
     out = []
@@ -496,16 +679,19 @@ def samples(root: str | Path) -> dict:
     """The stored DART answers of a few well-known listings, to check the layouts against."""
     out = {}
     for code in SAMPLES:
-        out[code] = {k: _read(p) for k, p in (("estkRs", _path(root, code)), ("final", _final_path(root, code)))
-                     if p.exists()}
+        out[code] = {k: _read(p) for k, p in (("estkRs", _path(root, code)), ("final", _final_path(root, code)),
+                                              ("demand", _demand_path(root, code))) if p.exists()}
     return out
 
 
-def write(folder: Path, t: pd.DataFrame, s: pd.DataFrame, text: str, raw: dict | None = None) -> None:
+def write(folder: Path, t: pd.DataFrame, s: pd.DataFrame, text: str, raw: dict | None = None,
+          demand: pd.DataFrame | None = None) -> None:
     folder.mkdir(parents=True, exist_ok=True)
     if raw is not None:
         (folder / "dart_samples.json").write_text(json.dumps(raw, ensure_ascii=False, indent=1), encoding="utf-8")
     t.assign(date=t["date"].dt.strftime("%Y-%m-%d")).to_csv(folder / "ipo_firstday.csv", index=False,
                                                             encoding="utf-8-sig")
     s.to_csv(folder / "ipo_summary.csv", index=False, encoding="utf-8-sig")
+    if demand is not None:
+        demand.to_csv(folder / "ipo_demand.csv", index=False, encoding="utf-8-sig")
     (folder / "ipo_summary.txt").write_text(text, encoding="utf-8")

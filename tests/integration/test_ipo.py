@@ -6,12 +6,13 @@ import io
 import json
 import zipfile
 
+import numpy as np
 import pandas as pd
 import pytest
+from kr_fixtures import FakeKrx, Resp, store_snapshots
 
 from quantlab.data import dart_open, ipo, krx_open, providers
 from quantlab.services.lab import Lab
-from kr_fixtures import FakeKrx, Resp, store_snapshots
 
 END = "2016-12-29"
 TODAY = "2016-12-30"   # the exchange publishes the previous session: 2016-12-29 is the last one asked
@@ -52,8 +53,9 @@ DOCS = {
     "00111110": [("20150120000001", "증권신고서(지분증권)", "희망공모가액 9,000원 ~ 11,000원"),
                  ("20150205000001", "[기재정정]증권신고서(지분증권)", "공모가액 9,000원 ~ 11,000원 (예정)"),
                  ("20150212000001", "[발행조건확정]증권신고서(지분증권)",
-                  "수요예측 결과 확정공모가액은 10,000원 으로 결정되었습니다. 희망공모가액 9,000원 ~ 11,000원 "
-                  "모집총액 공모가액 10,000원 × 1,000,000주 = 10,000,000,000원"),
+                  ("수요예측 결과 확정공모가액은 10,000원 으로 결정되었습니다. 희망공모가액 9,000원 ~ 11,000원 "
+                  "모집총액 공모가액 10,000원 × 1,000,000주 = 10,000,000,000원 "
+                  "수요예측 경쟁률은 1,234.56:1 입니다. 구분 국내기관 경쟁률 1,300.00:1 합계 경쟁률 1,234.56 : 1")),
                  ("20150310000001", "[발행조건확정]증권신고서(지분증권)", "확정공모가액 99,000원")],  # after listing
     "00555550": [("20150720000001", "증권신고서(지분증권)", "공모가액 5,000원 ~ 6,000원"),
                  ("20150814000001", "[발행조건확정]증권신고서(지분증권)", None),   # text not served
@@ -61,7 +63,8 @@ DOCS = {
     "00777770": [("20160401000001", "증권신고서(지분증권)", "공모가액 1,000원"),
                  ("20160415000001", "[발행조건확정]증권신고서(지분증권)", "확정공모가액 1,000원")],  # open 30x: wrong
     "00222220": [("20160601000001", "증권신고서(지분증권)", "공모가액 18,000원 ~ 22,000원"),
-                 ("20160615000001", "[발행조건확정]증권신고서(지분증권)", "확정공모가액 20,000원")],
+                 ("20160615000001", "[발행조건확정]증권신고서(지분증권)",
+                  "확정공모가액 20,000원 희망공모가액 18,000원 ~ 20,000원 수요예측 경쟁률 85.5 대 1")],
     "00888880": [("20150920000001", "증권신고서(지분증권)", "주주배정 3,000원")],
 }
 
@@ -195,6 +198,19 @@ def test_the_final_price_is_the_best_scored_number_the_opening_range_allows():
     assert [r["rcept_no"] for r in ranked] == ["20150212000001", "20150213000001", "20150205000001"]
 
 
+def test_demand_ratio_range_and_position_are_read_from_the_passages():
+    passages = ["경쟁률 1,522.85:1 을 기록", "경쟁률 국내 1,700.10:1 해외 1,400.00:1 합계 1,522.85 : 1",
+                "경쟁률 상위 기업 비교 2,000 대 1", "공모가액 9,000원 ~ 11,000원 기준 3:1 아님"]
+    assert ipo.demand_ratio(passages) == 1522.85
+    assert np.isnan(ipo.demand_ratio(["공모가액 3:1"]))
+    assert ipo.price_range(["희망공모가액 257,000원 ~ 300,000원 확정", "희망 공모가액 밴드 257,000원 ~ 300,000원",
+                            "희망공모가액 200,000원 ~ 400,000원"]) == (257000, 300000)   # too wide a range is not one
+    assert [ipo.position(o, 100, 120) for o in (90, 100, 110, 120, 130)] == list(ipo.POSITIONS)
+    assert ipo.position(np.nan, 100, 120) == ""
+    assert [ipo.ratio_bucket(v) for v in (50, 100, 999.9, 1000, np.nan)] == \
+        ["100:1 미만", "100~500:1", "500~1000:1", "1000:1 이상", "못 읽음"]
+
+
 def test_study_end_to_end_resumes_after_the_daily_limit(tmp_path, monkeypatch):
     keys = {"krx": "good-key", "dart": "dart-key"}
     monkeypatch.setattr(providers, "get_api_key", lambda provider="tiingo": keys.get(provider))
@@ -239,6 +255,18 @@ def test_study_end_to_end_resumes_after_the_daily_limit(tmp_path, monkeypatch):
         assert s.loc["2016", "won_per_share_close"] == pytest.approx(-3000)
         assert "새로 상장한 보통주 7곳" in text and "스팩 1곳" in text and "첫 신고서 가격만 있음 1" in text
         assert "거래소 기준가 1, DART 신고서 2" in text and "1곳에서 거래소 기준가와 DART 신고서에서 읽은 가격이 1곳 일치" in text
+        # what was known before subscribing (D-045): the price's filing first, the next only without a ratio
+        assert docs.count("20150212000001") == 2 and docs.count("20160615000001") == 2
+        assert docs.count("20150815000001") == 2 and docs.count("20150814000001") == 2
+        assert (row["demand_ratio"], row["range_low"], row["range_high"], row["range_pos"]) == (1234.56, 9000, 11000, "범위 안")
+        r2 = t.loc["222220"]
+        assert (r2["demand_ratio"], r2["range_low"], r2["range_pos"]) == (85.5, 18000, "범위 상단")
+        assert pd.isna(t.loc["555550", "demand_ratio"]) and pd.isna(t.loc["777770", "demand_ratio"])
+        d = pd.read_csv(folder / "ipo_demand.csv")
+        whole = d[(d["period"] == "전체 기간") & (d["kind"] == "수요예측 경쟁률")].set_index("group")
+        assert list(whole.index) == ["100:1 미만", "1000:1 이상", "못 읽음"]
+        assert whole.loc["1000:1 이상", "open_mean"] == pytest.approx(0.8) and whole.loc["100:1 미만", "n"] == 1
+        assert "수요예측 경쟁률 읽음 2곳" in text and "첫 신고서 가격과 같은 곳 1/2" in text
         assert set(json.loads((folder / "dart_samples.json").read_text(encoding="utf-8"))) == set(ipo.SAMPLES)
         assert (folder / "ipo_summary.txt").read_text(encoding="utf-8") == text
         # a later run asks nothing more of DART

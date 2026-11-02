@@ -653,3 +653,21 @@ below its own 200-day average, held 5 sessions (t 3.3-3.7, about 150 trades in 2
 - Policy topcap_kr_v1: the Korean stock costs (0.015% commission, 0.20% sales tax, 0.10% slippage) and
   splits. The KRTOP300 holdout was read by D-039, so the rule is judged on 2010-2019 and forward
   records; close to tracking the index, which the user's other app covers, as the spec discloses.
+
+## D-045 · 2026-11-02 · IPO survey: what was known before subscribing
+- The first trustworthy survey (build-89: 783 priced listings, 243/247 KRX-DART agreement, six spot
+  checks right) showed a first-day open gain of +53% on average (median +35%) but 21% opening below the
+  offer. The user chose to look for a way to skip the losers before subscribing ("A로 가자"), and said
+  finding a strategy that makes money comes first; STOCK-assistant only once something proves out.
+- The final-terms filing carries the institutions' demand ratio (수요예측 경쟁률) and the price range
+  offered to them. The survey now keeps those passages (data/bulk/dart-ipo/demand/, the price's filing
+  first, a second only without a ratio) and reads the ratio quoted most often after 경쟁률 and the most
+  frequent price range.
+- Buckets fixed before looking: ratio below 100:1, 100-500, 500-1000, 1000 and up; final price below,
+  at the low end, inside, at the high end, above the range. Shown for the whole period and from
+  2023-06-26 (wider first-day band). Exported as ipo_demand.csv and appended to ipo_summary.txt.
+- Checks: the range's low end against estkRs's first price; the ratios of the three sample listings
+  (LG에너지솔루션, 카카오뱅크, 크래프톤) are printed to compare with the published figures. The text
+  layout of the demand section is unverified until the first run on the user's PC.
+- A survey, not a backtest: the KR 2020+ prices were already opened (D-039). Any rule taken from it is
+  judged going forward only.
