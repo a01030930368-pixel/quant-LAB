@@ -1,7 +1,8 @@
 """Index dataset KRTOP300: Korean stocks from the exchange's daily snapshots on the session calendar of
 the KODEX 200 (069500) dataset (D-038). Same layout as the S&P 500 datasets (quantlab.data.index_dataset,
 which also loads it): stocks.parquet, members.parquet, events.parquet (empty, or with `dart=True` the
-OpenDART filings of the members, D-040).
+OpenDART filings of the members, D-040; with `caps=True` also each member's market value at the close of
+every month's last session, kind `kr_mktcap`, D-044).
 """
 
 from __future__ import annotations
@@ -23,7 +24,8 @@ MIN_DART_SHARE = 0.80        # members with a DART company code; fewer is a warn
 EVENT_COLUMNS = dart_open.EVENT_COLUMNS
 
 
-def build(store, base_version: str, root, start: str, say=None, dart: bool = False) -> tuple[str, dict]:
+def build(store, base_version: str, root, start: str, say=None, dart: bool = False,
+          caps: bool = False) -> tuple[str, dict]:
     say = say or (lambda s: None)
     base, base_manifest = store.load_dataset(base_version)
     sessions = base.calendar[base.calendar >= pd.Timestamp(start)]
@@ -35,6 +37,8 @@ def build(store, base_version: str, root, start: str, say=None, dart: bool = Fal
               "min_value": kr_stocks.MIN_VALUE}
     if dart:
         inputs["dart"] = dart_open.inputs(root)
+    if caps:
+        inputs["caps"] = 1
     version = stable_hash(inputs)
     done = store.proc_dir / version[:16] / "manifest.json"
     if done.exists():
@@ -88,8 +92,8 @@ def build(store, base_version: str, root, start: str, say=None, dart: bool = Fal
         say("DART 공시 정리 중")
         raw = snaps[snaps["code"].isin(set(members.columns))]
         closes = kr_stocks._wide(raw, "close", sessions, list(members.columns))
-        caps = kr_stocks._wide(raw, "mktcap", sessions, list(members.columns))
-        events, dart_counts = dart_open.events(root, list(members.columns), closes, caps)
+        values = kr_stocks._wide(raw, "mktcap", sessions, list(members.columns))
+        events, dart_counts = dart_open.events(root, list(members.columns), closes, values)
         share = dart_counts["mapped"] / max(len(members.columns), 1)
         dart_counts["mapped_share"] = share
         if not len(events):
@@ -98,6 +102,19 @@ def build(store, base_version: str, root, start: str, say=None, dart: bool = Fal
             warnings.append(f"DART: only {share:.0%} of members have a company code (delisted names may lack one)")
         if dart_counts["no_date"]:
             warnings.append(f"DART: {dart_counts['no_date']} filings without a receipt date dropped")
+    if caps:
+        raw = snaps[snaps["code"].isin(set(members.columns))]
+        ends = pd.Series(sessions, index=sessions).groupby([sessions.year, sessions.month]).max()
+        wide = kr_stocks._wide(raw, "mktcap", pd.DatetimeIndex(ends.to_numpy()), list(members.columns))
+        long = wide.stack().rename("value").reset_index()
+        long.columns = ["known", "symbol", "value"]
+        long = long[long["value"] > 0]
+        cap_ev = long.assign(kind="kr_mktcap", officer=False, director=False, owner="exchange")[EVENT_COLUMNS]
+        events = pd.concat([events, cap_ev], ignore_index=True) if len(events) else cap_ev
+        events["known"] = pd.to_datetime(events["known"])
+        events = events.sort_values(["known", "symbol", "kind"], kind="stable").reset_index(drop=True)
+        if not len(cap_ev):
+            fatal.append("KRX: no market values for the members")
     events.to_parquet(out / "events.parquet", index=False)
     manifest = {"dataset_version": version, "processing_version": PROCESSING_VERSION, "kind": "index",
                 "index": INDEX, "inputs": inputs, "symbols": base_manifest["symbols"], "base_dataset": base_version,

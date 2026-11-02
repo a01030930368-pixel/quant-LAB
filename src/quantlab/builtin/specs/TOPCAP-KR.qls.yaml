@@ -1,0 +1,49 @@
+# The ten largest Korean stocks at 10% each, rebalanced monthly (D-044). Idea from the user (a short-form
+# video, 2026-11-01); fixed 2026-11-01 before this rule was run on any data, by Claude or the app; three
+# neighbours are fixed with it (policy topcap_kr_v1). Korean stock prices of 2014-2026 were seen by
+# earlier work (AUTO-KRSTK, AUTO-KRDART, D-039 read the 2020+ holdout); no ranking by market value was
+# among those rules. A stock enters KRTOP300, and so this rule, only after about six months of trading,
+# so a large new listing joins later than in a pure "ten largest" list.
+spec_version: 1
+strategy:
+  id: TOPCAP-KR
+  version: 1.0.0
+  name: 시가총액 상위 10종목 10%씩 (한국, 매달 리밸런싱)
+  type: rotation
+  author: claude
+  parent: null
+  derived_after_holdout_view: false
+hypothesis:
+  class: theory
+  economic_rationale: >
+    Holding the largest companies at equal weight is a concentrated version of the market. It can beat
+    the KOSPI 200 when the largest firms grow faster (the 2020s mega caps abroad) and rebalancing sells
+    winners back to 10%, but over decades the largest stocks have tended to trail the rest of the
+    market (Arnott et al., Research Affiliates "the biggest loser"), so no edge is assumed.
+  expected_risks:
+    - in Korea Samsung Electronics alone is 20-30% of the KOSPI 200; capping it at 10% can trail badly
+    - ten stocks bunch in a few sectors (chips, batteries, autos, finance)
+    - close to tracking the index, which the user's existing app already covers
+  falsification: >
+    Net Sharpe not above KODEX 200 buy-and-hold with block-bootstrap p < 0.10, or max drawdown above 80%
+    of KODEX 200's; or one of the neighbours (top 5 or 20) with a Sharpe below KODEX 200's.
+universe:
+  market: KR_STOCK
+  index: KRTOP300
+  symbols: ["069500"]
+  frequency: daily
+rules:
+  kind: declarative
+  topcap:
+    months: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+    park: "069500"
+execution:
+  signal_time: close
+  fill: next_open
+  rebalance: daily
+parameters:
+  top_n: {default: 10}
+benchmark: "069500_buy_and_hold"
+costs: {one_way_bps: 12}   # informational; the validation policy's costs are binding
+validation:
+  policy: topcap_kr_v1
