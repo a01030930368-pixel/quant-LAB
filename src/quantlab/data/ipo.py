@@ -46,6 +46,13 @@ a tie); the range is the most frequent "a원 ~ b원" pair after a range word wit
 First-day returns are then grouped by fixed ratio buckets (`RATIO_EDGES`) and by where the final price
 fell in the range, for the whole period and from `RULE_CHANGE` on. The range's low end should equal
 estkRs's first price (`first_offer`), and how often it does is reported as a check on the reading.
+
+The first run (2026-11-03) read the range for 776 of 784 listings but the ratio for only 204: the filings
+print it as a table row, "경쟁률 700.09 322.17 .. 1,732.83" (per investor type, then the total), so the
+total at the end of that row is taken first (D-046). The same filing's lock-up table gives the share of
+the shares bid for with a lock-up (1 - 미확약 total / 합계 total). Both are read again from the stored
+passages, with no new DART calls. The rule the run pointed to (final price at or above the range top,
+`TOP`) is shown against the rest.
 """
 
 from __future__ import annotations
@@ -84,6 +91,8 @@ DEMAND_WIDTH = 400                    # a ratio sits in a table, often far after
 DEMAND_DOCS = 2
 MAX_RANGE = 1.6
 RATIO_EDGES = (100, 500, 1000)        # 수요예측 경쟁률 buckets, fixed before looking (D-045)
+LOCKUP_EDGES = (0.10, 0.30)          # 기관 의무보유 확약 비율 buckets, fixed before looking (D-046)
+TOP = ("범위 상단", "범위 위")          # the rule the 2026-11-03 run pointed to: final price at or above the range top
 POSITIONS = ("범위 아래", "범위 하단", "범위 안", "범위 상단", "범위 위")
 COLUMNS = ["date", "year", "market", "code", "name", "match", "corp_code", "rcept_no", "method", "first_offer",
            "krx_base", "dart_final", "final_rcept_no", "offer_source", "offer", "open", "close", "ret_open",
@@ -441,17 +450,71 @@ _RATIO = re.compile(r"(\d{1,3}(?:,\d{3})*(?:\.\d+)?|\d+(?:\.\d+)?)\s*(?::|대)\s
 _RANGE = re.compile(r"(\d{1,3}(?:,\d{3})+|\d{3,7})\s*원?\s*[~∼～\-]\s*(\d{1,3}(?:,\d{3})+|\d{3,7})\s*원")
 
 
+_DECIMAL = re.compile(r"(?:\d{1,3}(?:,\d{3})+|\d+)\.\d+")
+_INTEGER = re.compile(r"\d{1,3}(?:,\d{3})+|\d+")
+
+
+def _run(tokens: list[str], pattern: re.Pattern) -> tuple[list[float], int]:
+    """The numbers at the start of `tokens` ("-" for an empty cell counts as 0) and where they stop."""
+    out = []
+    for i, tok in enumerate(tokens):
+        if tok == "-":
+            out.append(0.0)
+        elif pattern.fullmatch(tok):
+            out.append(float(tok.replace(",", "")))
+        elif tok[:1].isdigit() and not tok.endswith(")"):
+            return out, -1              # a number cut at the end of the passage, or not one this row holds
+        else:
+            return out, i
+    return out, -1                      # ran to the end of the passage: may be cut
+
+
+def _most(seen: dict) -> float:
+    return max(seen, key=lambda v: (seen[v], v)) if seen else np.nan
+
+
 def demand_ratio(passages: list[str]) -> float:
-    """The institutions' demand ratio quoted most often after 경쟁률 (the larger on a tie), or nan."""
-    seen: dict[float, int] = {}
+    """The institutions' demand ratio: the total at the end of the table row "경쟁률 a b .. total"
+    (seen on the user's PC, 2026-11-03: per investor type, then all), the one quoted most often; else
+    the "x:1" quoted most often after 경쟁률 (the larger on a tie); or nan."""
+    table: dict[float, int] = {}
+    quoted: dict[float, int] = {}
     for text in passages:
         if not text.startswith("경쟁률"):
             continue
+        nums, stop = _run(text[3:].split(), _DECIMAL)
+        if stop > 0 and any(v > 0 for v in nums):
+            table[nums[-1]] = table.get(nums[-1], 0) + 1
         for m in _RATIO.finditer(text):
             v = float(m.group(1).replace(",", ""))
             if v >= 0.01:
-                seen[v] = seen.get(v, 0) + 1
-    return max(seen, key=lambda v: (seen[v], v)) if seen else np.nan
+                quoted[v] = quoted.get(v, 0) + 1
+    return _most(table) if table else _most(quoted)
+
+
+def lockup_share(passages: list[str]) -> float:
+    """Share of the shares bid for with a lock-up: 1 - 미확약 total / 합계 total from the table
+    "... 미확약 n q .. n q 합 계 n q .. n q" (a passage starts at the 확약 inside 미확약), or nan."""
+    seen: dict[float, int] = {}
+    for text in passages:
+        if not text.startswith("확약"):
+            continue
+        tokens = text[2:].split()
+        a, stop = _run(tokens, _INTEGER)
+        if stop <= 0 or not a:
+            continue
+        rest = tokens[stop:]
+        if rest[:2] == ["합", "계"]:
+            rest = rest[2:]
+        elif rest[:1] == ["합계"]:
+            rest = rest[1:]
+        else:
+            continue
+        b, stop = _run(rest, _INTEGER)
+        if stop > 0 and b and b[-1] > 0 and 0 <= a[-1] <= b[-1]:
+            v = round(1 - a[-1] / b[-1], 4)
+            seen[v] = seen.get(v, 0) + 1
+    return _most(seen)
 
 
 def price_range(passages: list[str]) -> tuple[float, float]:
@@ -521,12 +584,17 @@ def download_demand(root: str | Path, key: str, t: pd.DataFrame, session=None, s
 
 def add_demand(root: str | Path, t: pd.DataFrame) -> pd.DataFrame:
     """`t` with the demand ratio, the price range and where the final price fell in it."""
-    ratio, lo, hi, pos, src = [], [], [], [], []
+    ratio, lo, hi, pos, src, lock = [], [], [], [], [], []
     for r in t.itertuples():
         p = _demand_path(root, r.code)
         got = (np.nan, np.nan, np.nan, "")
+        lk = np.nan
         if p.exists():
             docs = _read(p)["docs"]
+            for d in docs.values():
+                lk = lockup_share(d["snippets"])
+                if np.isfinite(lk):
+                    break
             for no, d in docs.items():           # the filing order was kept when storing
                 v = demand_ratio(d["snippets"])
                 if np.isfinite(v):
@@ -540,7 +608,16 @@ def add_demand(root: str | Path, t: pd.DataFrame) -> pd.DataFrame:
         hi.append(got[2])
         src.append(got[3])
         pos.append(position(float(r.offer), got[1], got[2]))
-    return t.assign(demand_ratio=ratio, range_low=lo, range_high=hi, range_pos=pos, demand_rcept_no=src)
+        lock.append(lk)
+    return t.assign(demand_ratio=ratio, range_low=lo, range_high=hi, range_pos=pos, demand_rcept_no=src,
+                    lockup=lock)
+
+
+def lockup_bucket(v: float) -> str:
+    if not np.isfinite(v):
+        return "못 읽음"
+    lo, hi = LOCKUP_EDGES
+    return f"{lo:.0%} 미만" if v < lo else (f"{lo:.0%}~{hi:.0%}" if v < hi else f"{hi:.0%} 이상")
 
 
 def ratio_bucket(v: float) -> str:
@@ -570,6 +647,16 @@ def demand_summary(t: pd.DataFrame) -> pd.DataFrame:
             sub = g[g["range_pos"] == b]
             if len(sub):
                 rows.append({"period": period, "kind": "확정 공모가 위치", "group": b or "못 읽음", **_stats(sub)})
+        top = g["range_pos"].isin(TOP)
+        for name, sub in (("상단 이상만 청약", g[top]), ("나머지", g[~top & (g["range_pos"] != "")])):
+            if len(sub):
+                rows.append({"period": period, "kind": "청약 규칙", "group": name, **_stats(sub)})
+        lb = g["lockup"].map(lockup_bucket)
+        lo, hi = LOCKUP_EDGES
+        for b in (f"{lo:.0%} 미만", f"{lo:.0%}~{hi:.0%}", f"{hi:.0%} 이상", "못 읽음"):
+            sub = g[lb == b]
+            if len(sub):
+                rows.append({"period": period, "kind": "기관 확약 비율", "group": b, **_stats(sub)})
     return pd.DataFrame(rows)
 
 
@@ -579,7 +666,7 @@ def demand_text(t: pd.DataFrame, d: pd.DataFrame) -> str:
     both = ok[ok["range_low"].notna() & ok["first_offer"].notna()]
     same = int(((both["range_low"] - both["first_offer"]).abs() < 0.5).sum())
     lines = ["", (f"상장 전에 알 수 있던 것 (공모가 찾은 {len(ok)}곳 중 수요예측 경쟁률 읽음 {got}곳, 희망 범위 읽음 "
-                  f"{ok['range_low'].notna().sum()}곳)"),
+                  f"{ok['range_low'].notna().sum()}곳, 기관 확약 비율 읽음 {ok['lockup'].notna().sum()}곳)"),
              f"점검: 희망 범위 아래쪽 값이 첫 신고서 가격과 같은 곳 {same}/{len(both)}"]
     for code in SAMPLES:
         r = ok[ok["code"] == code]
@@ -587,7 +674,8 @@ def demand_text(t: pd.DataFrame, d: pd.DataFrame) -> str:
             r = r.iloc[0]
             ratio = "못 읽음" if pd.isna(r["demand_ratio"]) else f"{r['demand_ratio']:,.2f}:1"
             rng = "못 읽음" if pd.isna(r["range_low"]) else f"{r['range_low']:,.0f}~{r['range_high']:,.0f}원"
-            lines.append(f"확인용: {r['name']} 경쟁률 {ratio}, 희망 범위 {rng}, 확정 {r['offer']:,.0f}원")
+            lock = "못 읽음" if pd.isna(r["lockup"]) else f"{r['lockup']:.1%}"
+            lines.append(f"확인용: {r['name']} 경쟁률 {ratio}, 희망 범위 {rng}, 확정 {r['offer']:,.0f}원, 확약 {lock}")
     for period in d["period"].unique() if len(d) else []:
         lines += ["", f"[{period}] 묶음: 건수 | 시가에 팔기 평균/중앙값/공모가 아래 | 종가에 팔기 평균/공모가 아래"]
         for r in d[d["period"] == period].itertuples():

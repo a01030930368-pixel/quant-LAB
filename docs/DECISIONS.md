@@ -671,3 +671,17 @@ below its own 200-day average, held 5 sessions (t 3.3-3.7, about 150 trades in 2
   layout of the demand section is unverified until the first run on the user's PC.
 - A survey, not a backtest: the KR 2020+ prices were already opened (D-039). Any rule taken from it is
   judged going forward only.
+
+## D-046 · 2026-11-03 · IPO survey: the ratio as a table row, lock-ups, the range-top rule
+- The first run with D-045 (build-93, 784 priced listings) read the price range for 776 (754 matching
+  the first filing's price) but the demand ratio for only 204. The stored passages show the filings print
+  the ratio as a table row, "경쟁률 700.09 322.17 .. 1,732.83", per investor type then the total; the
+  total is now taken from the end of that row. Checked on the three samples: LG에너지솔루션 2,023.37,
+  카카오뱅크 1,732.83, 크래프톤 243.15, matching the published figures.
+- The lock-up table of the same filing gives the share of shares bid for with a lock-up (1 - 미확약
+  total / 합계 total; samples 77.4%, 45.3%, 22.1%). Buckets fixed before looking: under 10%, 10-30%,
+  30% and up.
+- The run pointed to one rule: subscribe only when the final price is at or above the top of the range.
+  534 listings: first-day open +71% on average, 12% below the offer; the other 250: +15%, 40% below; the
+  same direction every year 2016-2026. It is shown as its own row ("청약 규칙"). It came from looking at
+  data the researcher had seen, so it is a candidate, judged on IPOs from now on.

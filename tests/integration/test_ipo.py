@@ -64,7 +64,8 @@ DOCS = {
                  ("20160415000001", "[발행조건확정]증권신고서(지분증권)", "확정공모가액 1,000원")],  # open 30x: wrong
     "00222220": [("20160601000001", "증권신고서(지분증권)", "공모가액 18,000원 ~ 22,000원"),
                  ("20160615000001", "[발행조건확정]증권신고서(지분증권)",
-                  "확정공모가액 20,000원 희망공모가액 18,000원 ~ 20,000원 수요예측 경쟁률 85.5 대 1")],
+                  ("확정공모가액 20,000원 희망공모가액 18,000원 ~ 20,000원 경쟁률 60.10 - 25.40 85.50 주1) 기관 "
+                   "6개월 확약 3 1,000 4 1,000 7 2,000 미확약 5 2,000 6 4,000 11 6,000 합 계 8 3,000 10 5,000 18 8,000 주1)"))],
     "00888880": [("20150920000001", "증권신고서(지분증권)", "주주배정 3,000원")],
 }
 
@@ -211,6 +212,21 @@ def test_demand_ratio_range_and_position_are_read_from_the_passages():
         ["100:1 미만", "100~500:1", "500~1000:1", "1000:1 이상", "못 읽음"]
 
 
+def test_demand_table_rows_as_the_filings_print_them():
+    # copied from 카카오뱅크's [발행조건확정] filing as stored on the user's PC (2026-11-03)
+    ratio = ["경쟁률 700.09 322.17 276.38 234.58 37.92 161.69 1,732.83 주1) 인수인(해외현지법인 및 해외지점을 포함한다)",
+             "경쟁률은 수요예측 이후 하단 55%(35,997,500 주) 기준으로 산출한 결과입니다"]
+    assert ipo.demand_ratio(ratio) == 1732.83
+    lock = ["확약 66 2,742,268,000 10 442,696,000 3개월 확약 179 7,535,809,000",
+            ("확약 219 9,517,636,000 169 7,469,129,000 146 5,830,656,000 121 5,091,098,000 178 1,247,154,000 146 "
+             "4,975,517,000 979 34,131,190,000 합 계 581 25,201,600,000 258 11,597,306,000 243 9,949,064,000 205 "
+             "8,444,119,000 194 1,364,938,000 186 5,820,409,000 1,667 62,377,436,000 주1) 인수인"),
+            "확약 1 2 합 계 3 47,296,31"]                       # cut off at the end of the passage: not read
+    assert ipo.lockup_share(lock) == pytest.approx(0.4528, abs=1e-4)
+    assert np.isnan(ipo.lockup_share(lock[-1:]))
+    assert [ipo.lockup_bucket(v) for v in (0.05, 0.1, 0.3, np.nan)] == ["10% 미만", "10%~30%", "30% 이상", "못 읽음"]
+
+
 def test_study_end_to_end_resumes_after_the_daily_limit(tmp_path, monkeypatch):
     keys = {"krx": "good-key", "dart": "dart-key"}
     monkeypatch.setattr(providers, "get_api_key", lambda provider="tiingo": keys.get(provider))
@@ -261,11 +277,15 @@ def test_study_end_to_end_resumes_after_the_daily_limit(tmp_path, monkeypatch):
         assert (row["demand_ratio"], row["range_low"], row["range_high"], row["range_pos"]) == (1234.56, 9000, 11000, "범위 안")
         r2 = t.loc["222220"]
         assert (r2["demand_ratio"], r2["range_low"], r2["range_pos"]) == (85.5, 18000, "범위 상단")
+        assert r2["lockup"] == pytest.approx(0.25) and pd.isna(row["lockup"])
         assert pd.isna(t.loc["555550", "demand_ratio"]) and pd.isna(t.loc["777770", "demand_ratio"])
         d = pd.read_csv(folder / "ipo_demand.csv")
         whole = d[(d["period"] == "전체 기간") & (d["kind"] == "수요예측 경쟁률")].set_index("group")
         assert list(whole.index) == ["100:1 미만", "1000:1 이상", "못 읽음"]
         assert whole.loc["1000:1 이상", "open_mean"] == pytest.approx(0.8) and whole.loc["100:1 미만", "n"] == 1
+        rule = d[(d["period"] == "전체 기간") & (d["kind"] == "청약 규칙")].set_index("group")
+        assert rule.loc["상단 이상만 청약", "n"] == 1 and rule.loc["나머지", "n"] == 1
+        assert "기관 확약 비율 읽음 1곳" in text
         assert "수요예측 경쟁률 읽음 2곳" in text and "첫 신고서 가격과 같은 곳 1/2" in text
         assert set(json.loads((folder / "dart_samples.json").read_text(encoding="utf-8"))) == set(ipo.SAMPLES)
         assert (folder / "ipo_summary.txt").read_text(encoding="utf-8") == text
