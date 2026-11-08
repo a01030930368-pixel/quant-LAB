@@ -111,7 +111,7 @@ def check_schema(spec: Any) -> list[str]:
 
         if un["index"] not in INDEXES:
             p.append(f"universe.index must be one of {list(INDEXES)}")
-    for block in ("insider", "earnings", "stock_combo", "lowvol", "topcap", "value"):
+    for block in ("insider", "earnings", "stock_combo", "lowvol", "topcap", "block", "value"):
         if spec["rules"].get(block) is not None and "index" not in un:
             p.append(f"{block} rules trade an index's stocks: set universe.index")
     if un["frequency"] != "daily":
@@ -261,6 +261,10 @@ def load_spec(path: str | Path) -> LoadedSpec:
                 from quantlab.strategies.topcap import TopCapStrategy
 
                 return TopCapStrategy(spec_id=sid, spec_version_str=ver, rules=rules, **params)
+            if "block" in rules:
+                from quantlab.strategies.block import BlockHoldingStrategy
+
+                return BlockHoldingStrategy(spec_id=sid, spec_version_str=ver, rules=rules, **params)
             if "pairs" in rules:
                 from quantlab.strategies.pairs import PairsStrategy
 

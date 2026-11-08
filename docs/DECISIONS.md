@@ -685,3 +685,20 @@ below its own 200-day average, held 5 sessions (t 3.3-3.7, about 150 trades in 2
   534 listings: first-day open +71% on average, 12% below the offer; the other 250: +15%, 40% below; the
   same direction every year 2016-2026. It is shown as its own row ("청약 규칙"). It came from looking at
   data the researcher had seen, so it is a candidate, judged on IPOs from now on.
+
+## D-047 · 2026-11-08 · BLOCK5-KR: buy where an institution newly reports 5%
+- Institutions holding for investment file the short form (약식) of the 5% holding report by the 10th of
+  the month after the change. OpenDART's majorstock.json gives every report per company (the user's DART
+  key); answers are stored in data/bulk/dart-block/, apart from the KRDART files, so those datasets keep
+  their versions. Only rules with a `block` section build datasets with these events.
+- Events, known on the receipt date: `kr_block_buy` (short form, holding up; value = increase in %p) and
+  `kr_block_new` (the same report when it is the first at 5% or more). General-form reports (owners,
+  companies, activists) are counted but give no event. The manifest keeps the counts of each form; a
+  build with no short-form reports stops.
+- Rule fixed before any run (BLOCK5-KR 1.0.0): on KRTOP300 members, buy at the next open after a
+  `kr_block_new` report, 1/10 of equity each, hold 20 sessions, rest in KODEX 200; the larger increase
+  first when slots run out; a new report on the exit day keeps the stock another 20 sessions.
+  Neighbours: 10 and 40 sessions.
+- The KR 2020+ holdout is already spent (D-039): the verdict comes from 2010-2019 and forward paper
+  trading. The report layout is OpenDART's published one, unverified until the first download on the
+  user's PC.

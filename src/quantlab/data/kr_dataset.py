@@ -12,7 +12,7 @@ import json
 import pandas as pd
 
 from quantlab.core.hashing import file_sha256, stable_hash
-from quantlab.data import dart_open, index_dataset, kr_stocks, krx_open
+from quantlab.data import dart_block, dart_open, index_dataset, kr_stocks, krx_open
 
 PROCESSING_VERSION = 1
 INDEX = "KRTOP300"
@@ -25,7 +25,7 @@ EVENT_COLUMNS = dart_open.EVENT_COLUMNS
 
 
 def build(store, base_version: str, root, start: str, say=None, dart: bool = False,
-          caps: bool = False) -> tuple[str, dict]:
+          caps: bool = False, block: bool = False) -> tuple[str, dict]:
     say = say or (lambda s: None)
     base, base_manifest = store.load_dataset(base_version)
     sessions = base.calendar[base.calendar >= pd.Timestamp(start)]
@@ -39,6 +39,8 @@ def build(store, base_version: str, root, start: str, say=None, dart: bool = Fal
         inputs["dart"] = dart_open.inputs(root)
     if caps:
         inputs["caps"] = 1
+    if block:
+        inputs["block"] = dart_block.inputs(root)
     version = stable_hash(inputs)
     done = store.proc_dir / version[:16] / "manifest.json"
     if done.exists():
@@ -115,6 +117,18 @@ def build(store, base_version: str, root, start: str, say=None, dart: bool = Fal
         events = events.sort_values(["known", "symbol", "kind"], kind="stable").reset_index(drop=True)
         if not len(cap_ev):
             fatal.append("KRX: no market values for the members")
+    block_counts = None
+    if block:
+        say("DART 5% 대량보유 공시 정리 중")
+        block_ev, block_counts = dart_block.events(root, list(members.columns))
+        if not block_counts["reports"]:
+            fatal.append("DART: no 5% holding reports for any member (download not finished?)")
+        elif not block_counts["short_form"]:
+            fatal.append(f"DART: no short-form (약식) 5% reports among {block_counts['reports']}: the report_tp layout differs")
+        if len(block_ev):
+            events = pd.concat([events, block_ev], ignore_index=True) if len(events) else block_ev
+            events["known"] = pd.to_datetime(events["known"])
+            events = events.sort_values(["known", "symbol", "kind"], kind="stable").reset_index(drop=True)
     events.to_parquet(out / "events.parquet", index=False)
     manifest = {"dataset_version": version, "processing_version": PROCESSING_VERSION, "kind": "index",
                 "index": INDEX, "inputs": inputs, "symbols": base_manifest["symbols"], "base_dataset": base_version,
@@ -123,7 +137,7 @@ def build(store, base_version: str, root, start: str, say=None, dart: bool = Fal
                 "sessions": [str(sessions[0].date()), str(sessions[-1].date())], "coverage": cov,
                 "price_counts": counts, "names": {c: str(n) for c, n in names.items()},
                 "missing_sessions": {m: len(v) for m, v in missing.items()},
-                "basket_corr_benchmark": corr, "dart": dart_counts,
+                "basket_corr_benchmark": corr, "dart": dart_counts, "block": block_counts,
                 "qc_fatal": fatal, "qc_warnings": warnings}
     (out / "manifest.json").write_text(json.dumps(manifest, indent=1, ensure_ascii=False, default=str),
                                        encoding="utf-8")

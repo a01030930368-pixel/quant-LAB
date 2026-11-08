@@ -1,0 +1,52 @@
+# Follow institutions crossing 5% of a Korean stock (D-047). The user asked (2026-11-08) for strategies
+# that use institutions' trades and chose the Korean 5% reports first. Fixed 2026-11-08 before any 5%
+# report was downloaded or run, by Claude or the app; two neighbours are fixed with it (policy
+# block5_kr_v1). Korean stock prices of 2014-2026 were seen by earlier work (AUTO-KRSTK, AUTO-KRDART,
+# D-039 read the 2020+ holdout); none of those rules used 5% reports.
+spec_version: 1
+strategy:
+  id: BLOCK5-KR
+  version: 1.0.0
+  name: 기관이 새로 5% 넘게 산 종목 따라 사기 (한국, 20거래일 보유)
+  type: event
+  author: claude
+  parent: null
+  derived_after_holdout_view: false
+hypothesis:
+  class: theory
+  economic_rationale: >
+    A pension fund or asset manager that builds a 5% stake has studied the company and is still buying;
+    large institutional purchases move prices for weeks while they continue, and the disclosure tells
+    other investors (studies of 13G/5% filings abroad find small positive returns after them). Korean
+    institutions mostly file the short form, due by the 10th of the following month, so part of the
+    move may be over by the filing.
+  expected_risks:
+    - the short-form report can be up to about six weeks old when it becomes public
+    - the National Pension Service files most reports and buys for index and policy reasons, not news
+    - large caps dominate KRTOP300; a 5% stake there is a slow, well-known build-up
+  falsification: >
+    Net Sharpe not above KODEX 200 buy-and-hold with block-bootstrap p < 0.10, or max drawdown above 80%
+    of KODEX 200's; or one of the neighbours (hold 10 or 40 sessions) with a Sharpe below KODEX 200's.
+    Trade level: mean return over KODEX 200 held for the same days at or below the 0.43% round trip.
+universe:
+  market: KR_STOCK
+  index: KRTOP300
+  symbols: ["069500"]
+  frequency: daily
+rules:
+  kind: declarative
+  block:
+    kinds: [kr_block_new]
+    min_change: 0.0
+    slots: 10
+    park: "069500"
+execution:
+  signal_time: close
+  fill: next_open
+  rebalance: daily
+parameters:
+  hold_days: {default: 20}
+benchmark: "069500_buy_and_hold"
+costs: {one_way_bps: 22}   # informational; the validation policy's costs are binding
+validation:
+  policy: block5_kr_v1
